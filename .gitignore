@@ -3,29 +3,53 @@ node_modules/
 
 # Environment
 .env
+.env.local
+.env.*.local
 
-# Database
+# Database (SQLite — only used in desktop/dev mode)
 data/
 *.db
+*.db-journal
 
 # Build output
 dist/
 
-# Recordings (user data)
+# Recordings (user-generated content — keep dir, ignore files)
 recordings/*.webm
 recordings/*.mp4
+recordings/*.mkv
+recordings/*.avi
+recordings/*.mov
 
 # OS files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
 Thumbs.db
+desktop.ini
 
-# IDE
+# IDE / Editor
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 
 # Logs
 *.log
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
 
-# Electron cache
+# Electron build artifacts
 .electron/
+dist-electron/
+out/
+release/
+build/
+*.exe
+*.dmg
+*.AppImage

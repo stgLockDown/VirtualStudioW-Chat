@@ -2,21 +2,25 @@
    Virtual Studio — Main Server
    Railway-ready Express + Socket.IO + PostgreSQL
    ═══════════════════════════════════════════════════════════════════════ */
-// Crash logger — writes errors to file for EXE diagnostics
-const _fs = require('fs');
-const _path = require('path');
-const _logDir = process.env.APPDATA
-  ? _path.join(process.env.APPDATA, 'virtual-studio-launcher')
-  : _path.join(require('os').homedir(), '.virtual-studio');
-try { _fs.mkdirSync(_logDir, { recursive: true }); } catch(_) {}
-const _logFile = _path.join(_logDir, 'server-error.log');
+// ── Process-level error logging (Railway/production safe — stdout only) ──
+const IS_RAILWAY = !!process.env.RAILWAY_ENVIRONMENT;
+const IS_ELECTRON = !!process.env.ELECTRON_APP;
 
 function writeErrorLog(label, err) {
   try {
     const ts = new Date().toISOString();
     const msg = `[${ts}] ${label}: ${err && err.stack ? err.stack : err}\n`;
-    _fs.appendFileSync(_logFile, msg);
     console.error(msg);
+    // Write to file only in Electron/desktop mode (not Railway)
+    if (IS_ELECTRON && !IS_RAILWAY) {
+      const _fs = require('fs');
+      const _path = require('path');
+      const _os = require('os');
+      const _logDir = process.env.APPDATA
+        ? _path.join(process.env.APPDATA, 'virtual-studio-launcher')
+        : _path.join(_os.homedir(), '.virtual-studio');
+      try { _fs.mkdirSync(_logDir, { recursive: true }); _fs.appendFileSync(_path.join(_logDir, 'server-error.log'), msg); } catch(_) {}
+    }
   } catch(_) {}
 }
 
@@ -56,9 +60,26 @@ const io = new Server(server, {
 });
 
 // ─── Middleware ──────────────────────────────────────────────────────
-app.use(cors());
+// ── CORS ── Allow all origins in dev; restrict to FRONTEND_URL in production
+const corsOrigin = process.env.FRONTEND_URL
+  ? [process.env.FRONTEND_URL, /\.railway\.app$/, /\.up\.railway\.app$/]
+  : '*';
+app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
+
+// ── Health Check ── Used by Railway healthcheck probe
+const _startTime = Date.now();
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    uptime: Math.floor((Date.now() - _startTime) / 1000),
+    environment: process.env.RAILWAY_ENVIRONMENT || process.env.NODE_ENV || 'development',
+    timestamp: new Date().toISOString(),
+    version: require('../package.json').version
+  });
+});
 
 // Recording uploads
 const recordingsDir = process.env.RECORDINGS_DIR || path.join(__dirname, '..', 'recordings');

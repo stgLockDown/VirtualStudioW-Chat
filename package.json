@@ -1,14 +1,17 @@
 {
   "name": "virtual-studio",
   "version": "1.3.0",
-  "description": "Virtual Studio — Online Learning Platform with Video Conferencing, Recording, Transcription & AI Summaries",
+  "description": "Virtual Studio — Online Learning Platform with Video Conferencing, Chat, Recording, Transcription & AI Summaries",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "dev": "node server/index.js"
+    "dev": "node server/index.js",
+    "build": "echo 'No build step required'",
+    "lint": "node --check server/index.js server/database.js server/auth.js server/chat.js"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

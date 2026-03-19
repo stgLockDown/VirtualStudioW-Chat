@@ -32,9 +32,12 @@ function createPgAdapter() {
   const { Pool } = require('pg');
   pgPool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: process.env.DATABASE_URL.includes('railway')
+    ssl: (process.env.RAILWAY_ENVIRONMENT ||
+          process.env.DATABASE_URL.includes('railway') ||
+          process.env.DATABASE_URL.includes('rlwy.net') ||
+          process.env.DB_SSL === 'true')
       ? { rejectUnauthorized: false }
-      : (process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false),
+      : false,
     max: 20,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000
