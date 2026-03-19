@@ -1,12 +1,12 @@
-/* ═══════════════════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════════════════════
    Virtual Studio — Chat Frontend (Slack-Style Pop-out Window)
    Connects to Socket.IO /chat namespace
-   ═══════════════════════════════════════════════════════════════════════ */
+   ═══════════════════════════════════════════════════════════════════════════ */
 
 (function() {
   'use strict';
 
-  // ─── Helpers ─────────────────────────────────────────────────────
+  // ——— Helpers ———————————————————————————————————————————
   const $ = s => document.querySelector(s);
   const $$ = s => document.querySelectorAll(s);
   const initials = name => (name || '?').split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
@@ -17,7 +17,6 @@
     '🤝','⭐','🎯','📌','🔔','💬','📝','🎓','📚','🧠'
   ];
 
-  // Slack-style avatar background colors
   const AVATAR_COLORS = [
     '#4a154b','#1264a3','#2bac76','#e8912d','#7c3aed',
     '#e01e5a','#36c5f0','#ecb22e','#611f69','#2eb67d'
@@ -30,7 +29,7 @@
     return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
   }
 
-  // ─── State ───────────────────────────────────────────────────────
+  // ——— State ——————————————————————————————————————————————
   const state = {
     socket: null,
     token: null,
@@ -46,7 +45,7 @@
     emojiPickerTarget: null,
   };
 
-  // ─── Initialization ──────────────────────────────────────────────
+  // ——— Initialization ————————————————————————————————————
   async function init() {
     const urlParams = new URLSearchParams(window.location.search);
     state.token = urlParams.get('token') || localStorage.getItem('vs-token');
@@ -56,6 +55,7 @@
       return;
     }
 
+    // Verify token via REST first
     try {
       const resp = await fetch('/api/auth/me', {
         headers: { 'Authorization': 'Bearer ' + state.token }
@@ -87,7 +87,6 @@
     $('#currentUserAvatar').style.background = userColor(state.user.id);
     const avatarText = document.createTextNode(ini);
     const avatar = $('#currentUserAvatar');
-    // Insert initials before the status dot
     avatar.insertBefore(avatarText, avatar.firstChild);
     $('#currentUserName').textContent = state.user.name;
     $('#sidebarUserName').textContent = state.user.name;
@@ -95,11 +94,10 @@
     document.title = `Virtual Studio — Chat · ${state.user.name}`;
   }
 
-  // ─── Socket.IO Connection ────────────────────────────────────────
+  // ——— Socket.IO Connection ——————————————————————————————
   function connectSocket() {
     const origin = window.location.origin;
     state.socket = io(origin + '/chat', {
-      auth: { token: state.token },
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 50,
@@ -111,15 +109,20 @@
     s.on('connect', () => {
       console.log('[Chat] Connected:', s.id);
       hideConnectionBar();
-      s.emit('get_channels', {}, (resp) => {
-        if (resp.success) {
-          state.channels = resp.channels;
-          renderChannelList();
-          if (!state.activeChannel && state.channels.length > 0) {
-            const general = state.channels.find(c => c.name === 'general' && c.type === 'public');
-            selectChannel(general || state.channels[0]);
-          }
+
+      // ─── Authenticate with token ───────────────────────────
+      // The server requires explicit 'authenticate' event before
+      // any other operations will work (sets currentUser on server)
+      s.emit('authenticate', { token: state.token }, (resp) => {
+        if (!resp || !resp.success) {
+          console.error('[Chat] Authentication failed:', resp?.error);
+          showError('Chat authentication failed: ' + (resp?.error || 'Unknown error'));
+          return;
         }
+        console.log('[Chat] Authenticated as:', resp.user?.name);
+
+        // Now that we're authenticated, load channels
+        loadChannels();
       });
     });
 
@@ -136,27 +139,28 @@
       showConnectionBar('disconnected', 'Unable to connect — retrying…');
     });
 
-    // ─── Socket Event Handlers ───────────────────────────────────
-    s.on('new_message', (msg) => {
-      if (state.activeChannel && msg.channel_id === state.activeChannel.id) {
+    // ——— Socket Event Handlers ———————————————————————————
+    s.on('new_message', (data) => {
+      // Server sends { message: {...} }
+      const msg = data.message || data;
+      if (state.activeChannel && msg.channelId === state.activeChannel.id) {
         state.messages.push(msg);
         appendMessage(msg);
         scrollToBottom();
-        s.emit('mark_read', { channelId: msg.channel_id });
+        s.emit('mark_read', { channelId: msg.channelId });
       } else {
-        updateUnreadBadge(msg.channel_id);
+        updateUnreadBadge(msg.channelId);
       }
     });
 
-    s.on('message_edited', (data) => {
+    s.on('message_updated', (data) => {
       const msgEl = document.querySelector(`[data-msg-id="${data.messageId}"]`);
       if (msgEl) {
         const contentEl = msgEl.querySelector('.chat-msg-content');
         if (contentEl) contentEl.innerHTML = formatContent(data.content) + ' <span class="chat-msg-edited">(edited)</span>';
       }
-      // Update state
       const msg = state.messages.find(m => m.id === data.messageId);
-      if (msg) { msg.content = data.content; msg.is_edited = true; }
+      if (msg) { msg.content = data.content; msg.isEdited = true; }
     });
 
     s.on('message_deleted', (data) => {
@@ -179,74 +183,113 @@
       }
     });
 
-    s.on('user_stop_typing', (data) => {
+    s.on('user_stopped_typing', (data) => {
       delete state.typingUsers[data.userId];
       renderTypingIndicator();
     });
 
-    s.on('user_online', (data) => {
-      state.onlineUsers.add(data.userId);
-      updateDmOnlineStatus(data.userId, true);
+    // Server emits user_presence with { userId, online, name }
+    s.on('user_presence', (data) => {
+      if (data.online) {
+        state.onlineUsers.add(data.userId);
+      } else {
+        state.onlineUsers.delete(data.userId);
+      }
+      updateDmOnlineStatus(data.userId, data.online);
     });
 
-    s.on('user_offline', (data) => {
-      state.onlineUsers.delete(data.userId);
-      updateDmOnlineStatus(data.userId, false);
-    });
-
-    s.on('channel_created', (channel) => {
-      state.channels.push(channel);
+    s.on('channel_created', (data) => {
+      const channel = data.channel || data;
+      // Only add if not already present
+      if (!state.channels.find(c => c.id === channel.id)) {
+        state.channels.push(channel);
+      }
       renderChannelList();
     });
 
-    s.on('member_added', (data) => {
+    // Server emits channel_joined when we're added to a channel
+    s.on('channel_joined', (data) => {
+      loadChannels();
+      toast(`You were added to ${data.type === 'dm' ? 'a conversation' : '#' + data.name}`, 'success');
+    });
+
+    s.on('member_joined', (data) => {
       if (state.activeChannel && data.channelId === state.activeChannel.id) {
-        appendSystemMessage(`${data.userName} joined the channel`);
+        appendSystemMessage(`${data.name} joined the channel`);
       }
     });
 
-    s.on('member_removed', (data) => {
+    s.on('member_left', (data) => {
       if (state.activeChannel && data.channelId === state.activeChannel.id) {
-        appendSystemMessage(`${data.userName} left the channel`);
+        appendSystemMessage(`${data.name} left the channel`);
       }
     });
 
-    s.on('member_request', (data) => {
+    s.on('member_request_created', (data) => {
       state.pendingRequests.push(data);
       showMemberRequestToast(data);
     });
 
-    s.on('request_approved', (data) => {
-      toast(`${data.userName} was added to the channel`, 'success');
+    s.on('member_request_approved', (data) => {
+      toast('Member was added to the channel', 'success');
     });
 
-    s.on('request_denied', () => {
-      toast('Request to add member was denied', 'info');
+    s.on('member_request_denied', (data) => {
+      toast('Request to add member was denied: ' + (data.reason || ''), 'info');
     });
 
-    s.on('added_to_channel', (data) => {
-      s.emit('get_channels', {}, (resp) => {
-        if (resp.success) {
-          state.channels = resp.channels;
-          renderChannelList();
-        }
-      });
-      toast(`You were added to #${data.channelName}`, 'success');
+    // DM notification
+    s.on('notification', (data) => {
+      if (data.type === 'dm' && data.from) {
+        toast(`New message from ${data.from}`, 'info');
+      } else if (data.type === 'mention' && data.from) {
+        toast(`${data.from} mentioned you`, 'info');
+      }
+    });
+
+    s.on('user_status_changed', (data) => {
+      // Could update UI status indicators
     });
   }
 
-  // ─── Connection Bar ──────────────────────────────────────────────
+  // ——— Load Channels ——————————————————————————————————————
+  function loadChannels() {
+    state.socket.emit('get_channels', {}, (resp) => {
+      if (resp && resp.success) {
+        state.channels = resp.channels.map(ch => {
+          // Normalize field names from server (snake_case) to our format
+          ch._unread = ch.unread_count || 0;
+          // For DMs, figure out the other user's name
+          if (ch.type === 'dm' && ch.name) {
+            const names = ch.name.split(', ');
+            ch._otherUser = names.find(n => n !== state.user.name) || names[0];
+          }
+          return ch;
+        });
+        renderChannelList();
+        if (!state.activeChannel && state.channels.length > 0) {
+          const general = state.channels.find(c => c.name === 'general' && c.type === 'public');
+          selectChannel(general || state.channels[0]);
+        }
+      } else {
+        console.error('[Chat] get_channels failed:', resp?.error);
+      }
+    });
+  }
+
+  // ——— Connection Bar ———————————————————————————————————
   function showConnectionBar(type, msg) {
     const bar = $('#connectionBar');
     bar.className = 'chat-connection-bar ' + type;
     bar.textContent = msg;
+    bar.style.display = 'block';
   }
   function hideConnectionBar() {
     $('#connectionBar').className = 'chat-connection-bar';
     $('#connectionBar').style.display = 'none';
   }
 
-  // ─── Channel List ────────────────────────────────────────────────
+  // ——— Channel List ——————————————————————————————————————
   function renderChannelList() {
     const channelContainer = $('#channelList');
     const dmContainer = $('#dmList');
@@ -305,7 +348,7 @@
     });
   }
 
-  // ─── Channel Selection ───────────────────────────────────────────
+  // ——— Channel Selection —————————————————————————————————
   function selectChannel(channel) {
     state.activeChannel = channel;
     state.messages = [];
@@ -332,22 +375,27 @@
     $('#messageInput').placeholder = isDm ? `Message ${channel._otherUser || 'user'}` : `Message #${channel.name}`;
     $('#messageInput').focus();
 
-    state.socket.emit('join_channel', { channelId: channel.id });
+    // No need to emit join_channel for channels we're already a member of —
+    // the server auto-joins us to rooms on authenticate. Just load messages.
     loadMessages(channel.id);
     state.socket.emit('mark_read', { channelId: channel.id });
   }
 
   function loadMessages(channelId, before) {
-    state.socket.emit('get_messages', { channelId, limit: 50, before }, (resp) => {
-      if (resp.success) {
-        state.messages = resp.messages.reverse();
+    // Server expects 'load_history' event
+    state.socket.emit('load_history', { channelId, limit: 50, before: before || (Date.now() + 1) }, (resp) => {
+      if (resp && resp.success) {
+        // Server returns messages oldest-first already (reversed in server)
+        state.messages = resp.messages;
         renderAllMessages();
         scrollToBottom();
+      } else {
+        console.error('[Chat] load_history failed:', resp?.error);
       }
     });
   }
 
-  // ─── Message Rendering ───────────────────────────────────────────
+  // ——— Message Rendering —————————————————————————————————
   function renderAllMessages() {
     const container = $('#messagesContainer');
     container.innerHTML = '';
@@ -355,7 +403,7 @@
     let lastDate = null;
 
     state.messages.forEach((msg, i) => {
-      const msgDate = formatDate(msg.created_at);
+      const msgDate = formatDate(msg.createdAt || msg.created_at);
       if (msgDate !== lastDate) {
         container.appendChild(createDateDivider(msgDate));
         lastDate = msgDate;
@@ -366,10 +414,13 @@
         lastUser = null;
         return;
       }
-      const isCont = (lastUser === msg.user_id) &&
-        (i > 0 && (new Date(msg.created_at) - new Date(state.messages[i-1].created_at)) < 300000);
+      const prevMsg = i > 0 ? state.messages[i - 1] : null;
+      const userId = msg.userId || msg.user_id;
+      const prevUserId = prevMsg ? (prevMsg.userId || prevMsg.user_id) : null;
+      const isCont = (lastUser === userId) && prevMsg &&
+        ((msg.createdAt || msg.created_at) - (prevMsg.createdAt || prevMsg.created_at)) < 300000;
       container.appendChild(createMessageEl(msg, isCont));
-      lastUser = msg.user_id;
+      lastUser = userId;
     });
   }
 
@@ -377,18 +428,20 @@
     const container = $('#messagesContainer');
     const lastMsg = state.messages.length > 1 ? state.messages[state.messages.length - 2] : null;
 
-    const msgDate = formatDate(msg.created_at);
+    const msgDate = formatDate(msg.createdAt || msg.created_at);
     if (lastMsg) {
-      const lastDate = formatDate(lastMsg.created_at);
+      const lastDate = formatDate(lastMsg.createdAt || lastMsg.created_at);
       if (msgDate !== lastDate) container.appendChild(createDateDivider(msgDate));
     }
     if (msg.type === 'system') {
       container.appendChild(createSystemMsg(msg.content));
       return;
     }
-    const isCont = lastMsg && lastMsg.user_id === msg.user_id &&
+    const userId = msg.userId || msg.user_id;
+    const lastUserId = lastMsg ? (lastMsg.userId || lastMsg.user_id) : null;
+    const isCont = lastMsg && lastUserId === userId &&
       msg.type !== 'system' && lastMsg.type !== 'system' &&
-      (new Date(msg.created_at) - new Date(lastMsg.created_at)) < 300000;
+      ((msg.createdAt || msg.created_at) - (lastMsg.createdAt || lastMsg.created_at)) < 300000;
     container.appendChild(createMessageEl(msg, isCont));
   }
 
@@ -411,31 +464,38 @@
     el.className = 'chat-message' + (isContinuation ? ' continuation' : '');
     el.dataset.msgId = msg.id;
 
-    const time = new Date(msg.created_at);
+    const ts = msg.createdAt || msg.created_at;
+    const time = new Date(ts);
     const timeStr = time.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-    const compactTime = time.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    const compactTime = timeStr;
 
-    const role = msg.user_role || 'student';
-    const isOwn = state.user && msg.user_id === state.user.id;
+    const role = msg.userRole || msg.user_role || 'student';
+    const userId = msg.userId || msg.user_id;
+    const userName = msg.userName || msg.user_name || 'Unknown';
+    const isOwn = state.user && userId === state.user.id;
     const showBadge = role !== 'student';
-    const color = userColor(msg.user_id);
+    const color = userColor(userId);
+    const isEdited = msg.isEdited || msg.is_edited;
+    const replyCount = msg.replyCount || msg.reply_count || 0;
 
     let reactions = {};
-    try { reactions = typeof msg.reactions === 'string' ? JSON.parse(msg.reactions || '{}') : (msg.reactions || {}); } catch(e) {}
+    try {
+      reactions = typeof msg.reactions === 'string' ? JSON.parse(msg.reactions || '{}') : (msg.reactions || {});
+    } catch(e) {}
 
     el.innerHTML = `
       <div class="chat-msg-compact-time">${compactTime}</div>
-      <div class="chat-msg-avatar role-${role}" style="background:${color};">${initials(msg.user_name)}</div>
+      <div class="chat-msg-avatar role-${role}" style="background:${color};">${initials(userName)}</div>
       <div class="chat-msg-body">
         <div class="chat-msg-header">
-          <span class="chat-msg-name">${escHtml(msg.user_name)}</span>
+          <span class="chat-msg-name">${escHtml(userName)}</span>
           ${showBadge ? `<span class="chat-msg-role-badge ${role}">${role}</span>` : ''}
           <span class="chat-msg-time-header">${timeStr}</span>
         </div>
-        <div class="chat-msg-content">${formatContent(msg.content)}${msg.is_edited ? ' <span class="chat-msg-edited">(edited)</span>' : ''}</div>
+        <div class="chat-msg-content">${formatContent(msg.content)}${isEdited ? ' <span class="chat-msg-edited">(edited)</span>' : ''}</div>
         ${renderReactionsHtml(msg.id, reactions)}
-        ${msg.reply_count > 0 ? `<div class="chat-msg-thread-link" data-parent-id="${msg.id}">
-          <span style="font-size:14px;">💬</span> ${msg.reply_count} ${msg.reply_count === 1 ? 'reply' : 'replies'}
+        ${replyCount > 0 ? `<div class="chat-msg-thread-link" data-parent-id="${msg.id}">
+          <span style="font-size:14px;">💬</span> ${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}
         </div>` : ''}
       </div>
       <div class="chat-msg-actions">
@@ -484,23 +544,17 @@
   function formatContent(text) {
     if (!text) return '';
     let html = escHtml(text);
-    // Code block
     html = html.replace(/```([\s\S]+?)```/g, '<pre><code>$1</code></pre>');
-    // Bold
     html = html.replace(/\*(.+?)\*/g, '<strong>$1</strong>');
-    // Italic
-    html = html.replace(/\_(.+?)\_/g, '<em>$1</em>');
-    // Inline code
+    html = html.replace(/_(.+?)_/g, '<em>$1</em>');
     html = html.replace(/`(.+?)`/g, '<code>$1</code>');
-    // Links
     html = html.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
-    // @mentions
     html = html.replace(/@(\w+)/g, '<span class="mention">@$1</span>');
     return html;
   }
 
-  function formatDate(dateStr) {
-    const d = new Date(dateStr);
+  function formatDate(dateVal) {
+    const d = new Date(dateVal);
     const today = new Date();
     const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
 
@@ -520,7 +574,7 @@
     requestAnimationFrame(() => { c.scrollTop = c.scrollHeight; });
   }
 
-  // ─── Typing Indicator ────────────────────────────────────────────
+  // ——— Typing Indicator ——————————————————————————————————
   function renderTypingIndicator() {
     const indicator = $('#typingIndicator');
     const now = Date.now();
@@ -539,7 +593,7 @@
     }
   }
 
-  // ─── Thread Panel ────────────────────────────────────────────────
+  // ——— Thread Panel ——————————————————————————————————————
   function openThread(parentMsg) {
     state.threadParent = parentMsg;
     const panel = $('#threadPanel');
@@ -553,13 +607,17 @@
     parentEl.style.marginBottom = '8px';
     threadMsgs.appendChild(parentEl);
 
-    state.socket.emit('get_messages', {
+    // Load thread replies using load_history with parent filter
+    // Note: server load_history doesn't support parentId filter directly,
+    // so we load channel messages and filter client-side for now
+    state.socket.emit('load_history', {
       channelId: state.activeChannel.id,
-      parentId: parentMsg.id,
-      limit: 50
+      limit: 100,
+      before: Date.now() + 1
     }, (resp) => {
-      if (resp.success) {
-        resp.messages.reverse().forEach(m => {
+      if (resp && resp.success) {
+        const replies = resp.messages.filter(m => m.parentId === parentMsg.id || m.parent_id === parentMsg.id);
+        replies.forEach(m => {
           threadMsgs.appendChild(createMessageEl(m, false));
         });
       }
@@ -573,7 +631,7 @@
     $('#threadPanel').classList.remove('open');
   }
 
-  // ─── Send Message ────────────────────────────────────────────────
+  // ——— Send Message ——————————————————————————————————————
   function sendMessage() {
     const input = $('#messageInput');
     const content = input.value.trim();
@@ -583,13 +641,13 @@
       channelId: state.activeChannel.id,
       content
     }, (resp) => {
-      if (resp.success) {
+      if (resp && resp.success) {
         input.value = '';
         input.style.height = 'auto';
         updateSendButton();
-        state.socket.emit('stop_typing', { channelId: state.activeChannel.id });
+        state.socket.emit('typing_stop', { channelId: state.activeChannel.id });
       } else {
-        toast(resp.error || 'Failed to send message', 'error');
+        toast(resp?.error || 'Failed to send message', 'error');
       }
     });
   }
@@ -604,7 +662,7 @@
       content,
       parentId: state.threadParent.id
     }, (resp) => {
-      if (resp.success) {
+      if (resp && resp.success) {
         input.value = '';
         const el = createMessageEl(resp.message, false);
         $('#threadMessages').appendChild(el);
@@ -612,7 +670,7 @@
     });
   }
 
-  // ─── Channel/DM Creation ─────────────────────────────────────────
+  // ——— Channel/DM Creation ———————————————————————————————
   function createChannel() {
     const name = $('#newChannelName').value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-');
     const description = $('#newChannelDesc').value.trim();
@@ -620,16 +678,20 @@
     if (!name) { toast('Channel name is required', 'error'); return; }
 
     state.socket.emit('create_channel', { name, type, description }, (resp) => {
-      if (resp.success) {
+      if (resp && resp.success) {
         closeModal('newChannelModal');
         $('#newChannelName').value = '';
         $('#newChannelDesc').value = '';
-        state.channels.push(resp.channel);
-        renderChannelList();
-        selectChannel(resp.channel);
+        // Reload all channels to get fresh data
+        loadChannels();
         toast(`#${name} was created`, 'success');
+        // Select the new channel after a brief delay for loadChannels to complete
+        setTimeout(() => {
+          const newCh = state.channels.find(c => c.name === name);
+          if (newCh) selectChannel(newCh);
+        }, 500);
       } else {
-        toast(resp.error || 'Failed to create channel', 'error');
+        toast(resp?.error || 'Failed to create channel', 'error');
       }
     });
   }
@@ -637,17 +699,31 @@
   function openNewDmModal() {
     openModal('newDmModal');
     $('#dmUserSearch').value = '';
-    $('#dmUserList').innerHTML = '<div style="text-align:center;color:var(--slack-text-muted);padding:20px;font-size:13px;">Type to find someone…</div>';
+    $('#dmUserList').innerHTML = '<div style="text-align:center;color:var(--slack-text-muted);padding:20px;font-size:13px;">Loading users…</div>';
     fetchUsers('');
     setTimeout(() => $('#dmUserSearch').focus(), 100);
   }
 
   async function fetchUsers(query) {
     try {
-      const resp = await fetch('/api/admin/users', {
+      // Use /api/chat/users which is accessible to any authenticated user
+      const resp = await fetch('/api/chat/users', {
         headers: { 'Authorization': 'Bearer ' + state.token }
       });
-      if (!resp.ok) return;
+      if (!resp.ok) {
+        // Fallback to /api/admin/users if chat endpoint doesn't exist
+        const fallback = await fetch('/api/admin/users', {
+          headers: { 'Authorization': 'Bearer ' + state.token }
+        });
+        if (!fallback.ok) throw new Error('Cannot fetch users');
+        const users = await fallback.json();
+        const filtered = users.filter(u =>
+          u.id !== state.user.id &&
+          (!query || u.name.toLowerCase().includes(query.toLowerCase()))
+        );
+        renderDmUserList(filtered);
+        return;
+      }
       const users = await resp.json();
       const filtered = users.filter(u =>
         u.id !== state.user.id &&
@@ -656,6 +732,7 @@
       renderDmUserList(filtered);
     } catch(e) {
       console.error('Failed to fetch users:', e);
+      $('#dmUserList').innerHTML = '<div style="text-align:center;color:var(--slack-text-muted);padding:20px;font-size:13px;">Could not load users</div>';
     }
   }
 
@@ -671,9 +748,11 @@
       el.className = 'chat-channel-item';
       el.style.height = 'auto';
       el.style.padding = '8px';
+      el.style.cursor = 'pointer';
       const color = userColor(user.id);
+      const isOnline = state.onlineUsers.has(user.id);
       el.innerHTML = `
-        <div class="chat-dm-avatar" style="background:${color};">${initials(user.name)}</div>
+        <div class="chat-dm-avatar ${isOnline ? 'online' : ''}" style="background:${color};">${initials(user.name)}</div>
         <span class="channel-name" style="color:var(--slack-text-primary);">${escHtml(user.name)}</span>
         <span style="font-size:13px;color:var(--slack-text-muted);margin-left:auto;">${user.role}</span>
       `;
@@ -683,27 +762,29 @@
   }
 
   function startDm(targetUser) {
+    // Use send_private_message to create/find DM channel
+    // Server expects { toUserId, content }
+    // We send a greeting message to create the channel
     state.socket.emit('send_private_message', {
-      targetUserId: targetUser.id,
-      content: ''
+      toUserId: targetUser.id,
+      content: '👋'  // Initial greeting — can't send empty
     }, (resp) => {
-      if (resp.success || resp.channel) {
+      if (resp && resp.success) {
         closeModal('newDmModal');
-        state.socket.emit('get_channels', {}, (chResp) => {
-          if (chResp.success) {
-            state.channels = chResp.channels;
-            renderChannelList();
-            const dmCh = state.channels.find(c => c.id === (resp.channel ? resp.channel.id : resp.channelId));
-            if (dmCh) selectChannel(dmCh);
-          }
-        });
+        // Reload channels to pick up the new DM
+        loadChannels();
+        // Select the DM channel after reload
+        setTimeout(() => {
+          const dmCh = state.channels.find(c => c.id === resp.channelId);
+          if (dmCh) selectChannel(dmCh);
+        }, 500);
       } else {
-        toast(resp.error || 'Failed to start DM', 'error');
+        toast(resp?.error || 'Failed to start DM', 'error');
       }
     });
   }
 
-  // ─── Emoji Picker ────────────────────────────────────────────────
+  // ——— Emoji Picker ——————————————————————————————————————
   function initEmojiPicker() {
     const grid = $('#emojiGrid');
     EMOJIS.forEach(emoji => {
@@ -726,17 +807,23 @@
       input.value += emoji;
       input.focus();
     } else if (state.emojiPickerTarget) {
-      state.socket.emit('toggle_reaction', { messageId: state.emojiPickerTarget, emoji });
+      // Toggle reaction: add or remove
+      state.socket.emit('add_reaction', { messageId: state.emojiPickerTarget, emoji }, (resp) => {
+        if (!resp || !resp.success) {
+          // Try removing instead (toggle behavior)
+          state.socket.emit('remove_reaction', { messageId: state.emojiPickerTarget, emoji });
+        }
+      });
     }
     $('#emojiPicker').classList.remove('open');
     state.emojiPickerTarget = null;
   }
 
-  // ─── Member Request Handling ─────────────────────────────────────
+  // ——— Member Request Handling ———————————————————————————
   function showMemberRequestToast(request) {
     const t = $('#memberRequestToast');
     $('#requestToastTitle').textContent = 'Member request';
-    $('#requestToastBody').textContent = `${request.requestedByName} wants to add ${request.userToAddName} to #${request.channelName}`;
+    $('#requestToastBody').textContent = `${request.requestedBy} wants to add ${request.userToAdd}`;
     t.classList.add('show');
     t.dataset.requestId = request.requestId;
     setTimeout(() => t.classList.remove('show'), 30000);
@@ -748,17 +835,18 @@
     if (!requestId) return;
     const action = approved ? 'approve_member_request' : 'deny_member_request';
     state.socket.emit(action, { requestId }, (resp) => {
-      if (resp.success) t.classList.remove('show');
+      if (resp && resp.success) t.classList.remove('show');
     });
   }
 
-  // ─── Search ──────────────────────────────────────────────────────
+  // ——— Search —————————————————————————————————————————————
   function doSearch(query) {
     if (!query.trim()) return;
     state.socket.emit('search_messages', { query, limit: 20 }, (resp) => {
-      if (resp.success && resp.messages.length > 0) {
+      if (resp && resp.success && resp.messages.length > 0) {
         const first = resp.messages[0];
-        const ch = state.channels.find(c => c.id === first.channel_id);
+        const chId = first.channelId || first.channel_id;
+        const ch = state.channels.find(c => c.id === chId);
         if (ch) selectChannel(ch);
         toast(`Found ${resp.messages.length} results`, 'info');
       } else {
@@ -767,11 +855,11 @@
     });
   }
 
-  // ─── Modal Helpers ───────────────────────────────────────────────
+  // ——— Modal Helpers —————————————————————————————————————
   function openModal(id) { document.getElementById(id).classList.add('open'); }
   function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
-  // ─── Toast ───────────────────────────────────────────────────────
+  // ——— Toast —————————————————————————————————————————————
   function toast(msg, type) {
     const el = document.createElement('div');
     el.className = 'chat-toast ' + (type || 'info');
@@ -780,7 +868,7 @@
     setTimeout(() => el.remove(), 3200);
   }
 
-  // ─── Utilities ───────────────────────────────────────────────────
+  // ——— Utilities —————————————————————————————————————————
   function escHtml(str) {
     const d = document.createElement('div');
     d.textContent = str || '';
@@ -791,7 +879,7 @@
     $('#btnSend').disabled = !$('#messageInput').value.trim();
   }
 
-  // ─── Event Bindings ──────────────────────────────────────────────
+  // ——— Event Bindings ————————————————————————————————————
   function bindEvents() {
     const msgInput = $('#messageInput');
     let typingTimer = null;
@@ -801,10 +889,10 @@
       msgInput.style.height = Math.min(msgInput.scrollHeight, 200) + 'px';
       updateSendButton();
       if (state.activeChannel) {
-        state.socket.emit('typing', { channelId: state.activeChannel.id });
+        state.socket.emit('typing_start', { channelId: state.activeChannel.id });
         clearTimeout(typingTimer);
         typingTimer = setTimeout(() => {
-          state.socket.emit('stop_typing', { channelId: state.activeChannel.id });
+          state.socket.emit('typing_stop', { channelId: state.activeChannel.id });
         }, 3000);
       }
     });
@@ -856,7 +944,15 @@
     document.addEventListener('click', (e) => {
       const reaction = e.target.closest('.chat-reaction');
       if (reaction) {
-        state.socket.emit('toggle_reaction', { messageId: reaction.dataset.msgId, emoji: reaction.dataset.emoji });
+        // Toggle reaction
+        const msgId = reaction.dataset.msgId;
+        const emoji = reaction.dataset.emoji;
+        const isReacted = reaction.classList.contains('reacted');
+        if (isReacted) {
+          state.socket.emit('remove_reaction', { messageId: msgId, emoji });
+        } else {
+          state.socket.emit('add_reaction', { messageId: msgId, emoji });
+        }
         return;
       }
 
@@ -893,17 +989,26 @@
       $('#filePreview').classList.remove('show');
     });
 
-    $('#btnMembers').addEventListener('click', () => toast('Members panel coming soon', 'info'));
+    $('#btnMembers').addEventListener('click', () => {
+      if (state.activeChannel) {
+        state.socket.emit('get_members', { channelId: state.activeChannel.id }, (resp) => {
+          if (resp && resp.success) {
+            const names = resp.members.map(m => `${m.name} (${m.role})${m.online ? ' 🟢' : ''}`).join('\n');
+            alert('Channel Members:\n\n' + names);
+          }
+        });
+      }
+    });
   }
 
-  // ─── Edit / Delete ───────────────────────────────────────────────
+  // ——— Edit / Delete —————————————————————————————————————
   function handleEditMessage(msgId) {
     const msg = state.messages.find(m => m.id === msgId);
     if (!msg) return;
     const newContent = prompt('Edit message:', msg.content);
     if (newContent !== null && newContent.trim() !== msg.content) {
       state.socket.emit('edit_message', { messageId: msgId, content: newContent.trim() }, (resp) => {
-        if (!resp.success) toast(resp.error || 'Failed to edit', 'error');
+        if (!resp || !resp.success) toast(resp?.error || 'Failed to edit', 'error');
       });
     }
   }
@@ -911,12 +1016,12 @@
   function handleDeleteMessage(msgId) {
     if (confirm('Delete this message? This can\'t be undone.')) {
       state.socket.emit('delete_message', { messageId: msgId }, (resp) => {
-        if (!resp.success) toast(resp.error || 'Failed to delete', 'error');
+        if (!resp || !resp.success) toast(resp?.error || 'Failed to delete', 'error');
       });
     }
   }
 
-  // ─── Text Formatting ────────────────────────────────────────────
+  // ——— Text Formatting ———————————————————————————————————
   function wrapSelection(char) {
     const input = $('#messageInput');
     const s = input.selectionStart, e = input.selectionEnd, t = input.value;
@@ -931,6 +1036,6 @@
     updateSendButton();
   }
 
-  // ─── Boot ────────────────────────────────────────────────────────
+  // ——— Boot ——————————————————————————————————————————————
   document.addEventListener('DOMContentLoaded', init);
 })();

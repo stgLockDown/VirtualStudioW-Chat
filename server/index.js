@@ -320,6 +320,14 @@ app.get('/api/auth/users', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Failed to fetch users' }); }
 });
 
+// Chat user list — accessible to any authenticated user (for DM user picker)
+app.get('/api/chat/users', authMiddleware, async (req, res) => {
+  try {
+    const users = await db.getAll('SELECT id, username, name, role, avatar_color FROM users ORDER BY name ASC');
+    res.json(users);
+  } catch (e) { res.status(500).json({ error: 'Failed to fetch users' }); }
+});
+
 // ═══════════════════════════════════════════════════════════════════════
 //  REST API
 // ═══════════════════════════════════════════════════════════════════════
