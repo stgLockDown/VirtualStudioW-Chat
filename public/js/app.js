@@ -791,7 +791,22 @@ function connectSocket(){
   S.socket.on('offer',async({from,offer})=>{
     let peer=S.peers.get(from);
     if(!peer){await createPeer(from,'Participant','student',false,true,true);peer=S.peers.get(from);}
-    if(peer){try{await peer.pc.setRemoteDescription(new RTCSessionDescription(offer));const ans=await peer.pc.createAnswer();await peer.pc.setLocalDescription(ans);S.socket.emit('answer',{to:from,answer:ans});}catch(e){console.error(e);}}
+    if(!peer) return;
+    try {
+      const pc = peer.pc;
+      // Perfect negotiation: handle offer collision
+      const offerCollision = (peer._makingOffer || pc.signalingState !== 'stable');
+      // Polite peer: the one with the lower socket ID yields
+      const polite = S.socket.id < from;
+      peer._ignoreOffer = !polite && offerCollision;
+      if(peer._ignoreOffer) return;
+
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      // If we had pending ICE candidates, they're now applied
+      const ans = await pc.createAnswer();
+      await pc.setLocalDescription(ans);
+      S.socket.emit('answer',{to:from,answer:pc.localDescription});
+    } catch(e){ console.error('[WebRTC] offer handling error:', e); }
   });
   S.socket.on('answer',async({from,answer})=>{const p=S.peers.get(from);if(p)try{await p.pc.setRemoteDescription(new RTCSessionDescription(answer));}catch(e){}});
   S.socket.on('ice-candidate',async({from,candidate})=>{const p=S.peers.get(from);if(p&&candidate)try{await p.pc.addIceCandidate(new RTCIceCandidate(candidate));}catch(e){}});
@@ -876,13 +891,62 @@ function connectSocket(){
 async function createPeer(id,name,role,initiator,audioEnabled=true,videoEnabled=true){
   if(S.peers.has(id))return;
   const pc=new RTCPeerConnection({iceServers:ICE_SERVERS});
-  const peer={pc,stream:null,name,role,audioEnabled,videoEnabled,screenSharing:false,handRaised:false};
+  const peer={pc,stream:null,name,role,audioEnabled,videoEnabled,screenSharing:false,handRaised:false,_makingOffer:false,_ignoreOffer:false};
   S.peers.set(id,peer);
-  if(S.localStream)S.localStream.getTracks().forEach(t=>pc.addTrack(t,S.localStream));
-  pc.ontrack=e=>{if(e.streams&&e.streams[0]){peer.stream=e.streams[0];updateVideoGrid();}};
-  pc.onicecandidate=e=>{if(e.candidate)S.socket.emit('ice-candidate',{to:id,candidate:e.candidate});};
-  pc.onconnectionstatechange=()=>{if(pc.connectionState==='failed')pc.restartIce();};
-  if(initiator){try{const offer=await pc.createOffer();await pc.setLocalDescription(offer);S.socket.emit('offer',{to:id,offer});}catch(e){}}
+
+  // Add all local tracks
+  const streamToSend = S.screenSharing && S.screenStream ? S.screenStream : S.localStream;
+  if(S.localStream) {
+    S.localStream.getTracks().forEach(t => {
+      // If screen sharing, replace video track with screen track
+      if(t.kind === 'video' && S.screenSharing && S.screenStream) {
+        const screenTrack = S.screenStream.getVideoTracks()[0];
+        if(screenTrack) { pc.addTrack(screenTrack, S.localStream); return; }
+      }
+      pc.addTrack(t, S.localStream);
+    });
+  } else if(S.screenStream) {
+    S.screenStream.getTracks().forEach(t => pc.addTrack(t, S.screenStream));
+  }
+
+  pc.ontrack = e => {
+    if(e.streams && e.streams[0]) {
+      peer.stream = e.streams[0];
+      // Also listen for tracks being added later (renegotiation)
+      e.streams[0].onaddtrack = () => updateVideoGrid();
+      e.streams[0].onremovetrack = () => updateVideoGrid();
+      updateVideoGrid();
+    }
+  };
+  pc.onicecandidate = e => { if(e.candidate) S.socket.emit('ice-candidate',{to:id,candidate:e.candidate}); };
+  pc.oniceconnectionstatechange = () => {
+    const state = pc.iceConnectionState;
+    if(state === 'failed') { console.warn(`[WebRTC] ICE failed for ${name}, restarting...`); pc.restartIce(); }
+    else if(state === 'connected' || state === 'completed') updateVideoGrid();
+  };
+  pc.onconnectionstatechange = () => {
+    if(pc.connectionState === 'failed') pc.restartIce();
+  };
+
+  // Perfect negotiation: handle onnegotiationneeded
+  pc.onnegotiationneeded = async () => {
+    try {
+      peer._makingOffer = true;
+      const offer = await pc.createOffer();
+      if(pc.signalingState !== 'stable') return;
+      await pc.setLocalDescription(offer);
+      S.socket.emit('offer',{to:id,offer:pc.localDescription});
+    } catch(e) { console.warn('[WebRTC] negotiationneeded error:', e); }
+    finally { peer._makingOffer = false; }
+  };
+
+  if(initiator){
+    try{
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      S.socket.emit('offer',{to:id,offer:pc.localDescription});
+    } catch(e){ console.warn('[WebRTC] initial offer error:', e); }
+  }
   updateVideoGrid();
 }
 function removePeer(id){const p=S.peers.get(id);if(p){p.pc.close();S.peers.delete(id);updateVideoGrid();}}
@@ -903,87 +967,129 @@ function toggleVideo(enabled){
   if(S.socket)S.socket.emit('toggle-video',{enabled});
 }
 
-// ─── Electron Screen Share Picker ──────────────────────────────
-async function showElectronScreenPicker() {
-  if (!window.desktop || !window.desktop.getScreenSources) return null;
-  
-  const sources = await window.desktop.getScreenSources();
-  
+// ─── Screen Share Picker ──────────────────────────────────────────────
+async function showScreenSharePicker() {
+  // Electron path: use desktopCapturer
+  const electronAPI = window.electronAPI || window.desktop;
+  const isElectron = electronAPI && electronAPI.getScreenSources;
+
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:99999;display:flex;flex-direction:column;align-items:center;padding:30px;overflow-y:auto;';
-    
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:99999;display:flex;flex-direction:column;align-items:center;padding:30px;overflow-y:auto;backdrop-filter:blur(8px);';
+
     const title = document.createElement('h2');
     title.textContent = 'Choose what to share';
-    title.style.cssText = 'color:#fff;margin-bottom:20px;font-family:Inter,sans-serif;';
+    title.style.cssText = 'color:#e8eaed;margin-bottom:6px;font-family:Inter,sans-serif;font-size:22px;';
     overlay.appendChild(title);
-    
-    const grid = document.createElement('div');
-    grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;max-width:1000px;width:100%;';
-    
-    sources.forEach(src => {
-      const card = document.createElement('div');
-      card.style.cssText = 'background:#1a1a2e;border:2px solid #2a2a3e;border-radius:12px;padding:12px;cursor:pointer;transition:all 0.2s;';
-      card.onmouseenter = () => { card.style.borderColor = '#2d8cff'; card.style.transform = 'scale(1.02)'; };
-      card.onmouseleave = () => { card.style.borderColor = '#2a2a3e'; card.style.transform = 'scale(1)'; };
-      
-      const img = document.createElement('img');
-      img.src = src.thumbnail;
-      img.style.cssText = 'width:100%;border-radius:8px;margin-bottom:8px;';
-      card.appendChild(img);
-      
-      const label = document.createElement('div');
-      label.textContent = src.name;
-      label.style.cssText = 'color:#e8eaed;font-size:13px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;font-family:Inter,sans-serif;';
-      card.appendChild(label);
-      
-      card.onclick = () => { overlay.remove(); resolve(src.id); };
-      grid.appendChild(card);
-    });
-    
-    overlay.appendChild(grid);
-    
+
+    const subtitle = document.createElement('p');
+    subtitle.textContent = isElectron ? 'Select a screen or window' : 'Select a sharing option below';
+    subtitle.style.cssText = 'color:#9aa0a6;font-size:13px;margin-bottom:20px;font-family:Inter,sans-serif;';
+    overlay.appendChild(subtitle);
+
+    // Audio toggle
+    const audioRow = document.createElement('div');
+    audioRow.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:20px;padding:10px 16px;background:#1a1a2e;border:1px solid #2a2a3e;border-radius:10px;';
+    const audioCb = document.createElement('input');
+    audioCb.type = 'checkbox'; audioCb.id = 'share-audio-cb'; audioCb.checked = true;
+    audioCb.style.cssText = 'width:18px;height:18px;accent-color:#2d8cff;cursor:pointer;';
+    const audioLabel = document.createElement('label');
+    audioLabel.htmlFor = 'share-audio-cb';
+    audioLabel.style.cssText = 'color:#e8eaed;font-size:14px;cursor:pointer;font-family:Inter,sans-serif;';
+    audioLabel.textContent = '\uD83D\uDD0A Share system audio';
+    audioRow.appendChild(audioCb); audioRow.appendChild(audioLabel);
+    overlay.appendChild(audioRow);
+
+    if (isElectron) {
+      electronAPI.getScreenSources().then(sources => {
+        const screens = sources.filter(s => s.id.startsWith('screen:'));
+        const windows = sources.filter(s => !s.id.startsWith('screen:'));
+
+        function addSection(label, items) {
+          if (items.length === 0) return;
+          const sectionTitle = document.createElement('div');
+          sectionTitle.textContent = label;
+          sectionTitle.style.cssText = 'color:#9aa0a6;font-size:12px;text-transform:uppercase;letter-spacing:1px;margin:12px 0 8px;width:100%;max-width:1000px;font-family:Inter,sans-serif;';
+          overlay.appendChild(sectionTitle);
+          const grid = document.createElement('div');
+          grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;max-width:1000px;width:100%;';
+          items.forEach(src => {
+            const card = document.createElement('div');
+            card.style.cssText = 'background:#1a1a2e;border:2px solid #2a2a3e;border-radius:12px;padding:12px;cursor:pointer;transition:all 0.2s;';
+            card.onmouseenter = () => { card.style.borderColor = '#2d8cff'; card.style.transform = 'scale(1.02)'; };
+            card.onmouseleave = () => { card.style.borderColor = '#2a2a3e'; card.style.transform = 'scale(1)'; };
+            const img = document.createElement('img');
+            img.src = src.thumbnail;
+            img.style.cssText = 'width:100%;border-radius:8px;margin-bottom:8px;aspect-ratio:16/9;object-fit:cover;background:#0f0f17;';
+            card.appendChild(img);
+            const lbl = document.createElement('div');
+            lbl.textContent = src.name;
+            lbl.style.cssText = 'color:#e8eaed;font-size:13px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;font-family:Inter,sans-serif;';
+            card.appendChild(lbl);
+            card.onclick = () => { overlay.remove(); resolve({ type: 'electron', sourceId: src.id, shareAudio: audioCb.checked }); };
+            grid.appendChild(card);
+          });
+          overlay.appendChild(grid);
+        }
+        addSection('Screens', screens);
+        addSection('Application Windows', windows);
+      });
+    } else {
+      const grid = document.createElement('div');
+      grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;max-width:700px;width:100%;';
+      const options = [
+        { icon: '\uD83D\uDDA5\uFE0F', label: 'Entire Screen', desc: 'Share your full screen', type: 'screen' },
+        { icon: '\uD83E\uDE9F', label: 'Window', desc: 'Share a specific window', type: 'window' },
+        { icon: '\uD83D\uDCD1', label: 'Browser Tab', desc: 'Share a browser tab', type: 'tab' }
+      ];
+      options.forEach(opt => {
+        const card = document.createElement('div');
+        card.style.cssText = 'background:#1a1a2e;border:2px solid #2a2a3e;border-radius:12px;padding:24px 16px;cursor:pointer;transition:all 0.2s;text-align:center;';
+        card.onmouseenter = () => { card.style.borderColor = '#2d8cff'; card.style.transform = 'scale(1.02)'; card.style.background = '#1e1e35'; };
+        card.onmouseleave = () => { card.style.borderColor = '#2a2a3e'; card.style.transform = 'scale(1)'; card.style.background = '#1a1a2e'; };
+        card.innerHTML = '<div style="font-size:36px;margin-bottom:10px;">' + opt.icon + '</div><div style="color:#e8eaed;font-size:15px;font-weight:600;margin-bottom:4px;font-family:Inter,sans-serif;">' + opt.label + '</div><div style="color:#9aa0a6;font-size:12px;font-family:Inter,sans-serif;">' + opt.desc + '</div>';
+        card.onclick = () => { overlay.remove(); resolve({ type: 'browser', shareType: opt.type, shareAudio: audioCb.checked }); };
+        grid.appendChild(card);
+      });
+      overlay.appendChild(grid);
+    }
+
     const cancelBtn = document.createElement('button');
     cancelBtn.textContent = 'Cancel';
-    cancelBtn.style.cssText = 'margin-top:20px;padding:10px 30px;background:#333;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;';
+    cancelBtn.style.cssText = 'margin-top:24px;padding:10px 36px;background:#2a2a3e;color:#e8eaed;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-family:Inter,sans-serif;transition:background 0.2s;';
+    cancelBtn.onmouseenter = () => { cancelBtn.style.background = '#3a3a4e'; };
+    cancelBtn.onmouseleave = () => { cancelBtn.style.background = '#2a2a3e'; };
     cancelBtn.onclick = () => { overlay.remove(); resolve(null); };
     overlay.appendChild(cancelBtn);
-    
+
+    const escHandler = (e) => { if(e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escHandler); resolve(null); } };
+    document.addEventListener('keydown', escHandler);
     document.body.appendChild(overlay);
   });
 }
 
 async function toggleScreenShare(){
   if(S.screenSharing){
-    // Stop screen sharing - restore camera track
-    if(S.screenStream){
-      S.screenStream.getTracks().forEach(t=>t.stop());
-    }
+    if(S.screenStream){ S.screenStream.getTracks().forEach(t=>t.stop()); }
     S.screenStream=null;
     S.screenSharing=false;
 
-    // Restore camera video track to all peers
     const camTrack = S.localStream ? S.localStream.getVideoTracks()[0] : null;
     const replacePromises = [];
     S.peers.forEach((p) => {
-      const sender = p.pc.getSenders().find(s => s.track && s.track.kind === 'video');
-      if (sender && camTrack) {
-        replacePromises.push(sender.replaceTrack(camTrack).catch(e => console.warn('replaceTrack restore:', e)));
-      } else if (sender && !camTrack) {
-        // No camera track - remove video sender gracefully
-        replacePromises.push(sender.replaceTrack(null).catch(e => console.warn('replaceTrack null:', e)));
+      const videoSender = p.pc.getSenders().find(s => s.track && s.track.kind === 'video');
+      if (videoSender && camTrack) {
+        replacePromises.push(videoSender.replaceTrack(camTrack).catch(e => console.warn('replaceTrack restore:', e)));
+      } else if (videoSender && !camTrack) {
+        replacePromises.push(videoSender.replaceTrack(null).catch(e => console.warn('replaceTrack null:', e)));
+      }
+      // Remove extra screen audio sender if present
+      const audioSenders = p.pc.getSenders().filter(s => s.track && s.track.kind === 'audio');
+      if(audioSenders.length > 1) {
+        try { p.pc.removeTrack(audioSenders[audioSenders.length - 1]); } catch(e) {}
       }
     });
     await Promise.all(replacePromises);
-
-    // Renegotiate with all peers to ensure stable connection
-    S.peers.forEach(async (p, pid) => {
-      try {
-        const offer = await p.pc.createOffer();
-        await p.pc.setLocalDescription(offer);
-        S.socket.emit('offer', { to: pid, offer });
-      } catch(e) { console.warn('Renegotiation after screen share stop:', e); }
-    });
 
     S.socket.emit('screen-share-stopped');
     updateToolbar();
@@ -991,129 +1097,267 @@ async function toggleScreenShare(){
     updateRemoteControlVisibility();
   } else {
     try {
-      // Use Electron screen picker if available, otherwise browser native
-      if (window.desktop && window.desktop.getScreenSources) {
-        const sourceId = await showElectronScreenPicker();
-        if (!sourceId) return; // User cancelled
+      const choice = await showScreenSharePicker();
+      if(!choice) return;
+
+      const electronAPI = window.electronAPI || window.desktop;
+
+      if(choice.type === 'electron') {
         S.screenStream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {
-            mandatory: {
-              chromeMediaSource: 'desktop',
-              chromeMediaSourceId: sourceId,
-              maxFrameRate: 30
-            }
-          }
+          audio: choice.shareAudio ? { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: choice.sourceId } } : false,
+          video: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: choice.sourceId, maxFrameRate: 30 } }
         });
       } else {
-        S.screenStream = await navigator.mediaDevices.getDisplayMedia({
+        const displayMediaOpts = {
           video: { cursor: 'always', frameRate: { ideal: 30 } },
-          audio: true
-        });
+          audio: choice.shareAudio
+        };
+        if(choice.shareType === 'tab') displayMediaOpts.video.displaySurface = 'browser';
+        else if(choice.shareType === 'window') displayMediaOpts.video.displaySurface = 'window';
+        else if(choice.shareType === 'screen') displayMediaOpts.video.displaySurface = 'monitor';
+        if(choice.shareAudio) { displayMediaOpts.systemAudio = 'include'; }
+        S.screenStream = await navigator.mediaDevices.getDisplayMedia(displayMediaOpts);
       }
+
       S.screenSharing = true;
-
       const screenTrack = S.screenStream.getVideoTracks()[0];
+      const screenAudioTrack = S.screenStream.getAudioTracks()[0] || null;
 
-      // Replace camera track with screen track on all peers
       const replacePromises = [];
       S.peers.forEach((p) => {
-        const sender = p.pc.getSenders().find(s => s.track && s.track.kind === 'video');
-        if (sender) {
-          replacePromises.push(sender.replaceTrack(screenTrack).catch(e => console.warn('replaceTrack screen:', e)));
+        const videoSender = p.pc.getSenders().find(s => s.track && s.track.kind === 'video');
+        if (videoSender) {
+          replacePromises.push(videoSender.replaceTrack(screenTrack).catch(e => console.warn('replaceTrack screen:', e)));
+        }
+        if(screenAudioTrack) {
+          try { p.pc.addTrack(screenAudioTrack, S.screenStream); } catch(e) { console.warn('addTrack screen audio:', e); }
         }
       });
       await Promise.all(replacePromises);
 
-      // Renegotiate with all peers for screen share quality
-      S.peers.forEach(async (p, pid) => {
-        try {
-          const offer = await p.pc.createOffer();
-          await p.pc.setLocalDescription(offer);
-          S.socket.emit('offer', { to: pid, offer });
-        } catch(e) { console.warn('Renegotiation after screen share start:', e); }
-      });
-
-      // Handle user stopping screen share via browser UI
-      screenTrack.onended = () => {
-        if (S.screenSharing) toggleScreenShare();
-      };
+      screenTrack.onended = () => { if (S.screenSharing) toggleScreenShare(); };
 
       S.socket.emit('screen-share-started');
       updateToolbar();
       updateVideoGrid();
       updateRemoteControlVisibility();
+      toast('\uD83D\uDDA5\uFE0F Screen sharing started' + (screenAudioTrack ? ' with audio' : ''), 'success');
     } catch(e) {
-      if (e.name !== 'NotAllowedError') toast('❌ Screen share failed', 'error');
+      if (e.name !== 'NotAllowedError') toast('\u274C Screen share failed: ' + e.message, 'error');
     }
   }
 }
 
-// ─── Recording ──────────────────────────────────────────────────
+// ─── Recording (Full Room Composite) ──────────────────────────────────
 function toggleRecording(){
   if(S.isRecording){stopRecording();}
   else{startRecording();}
 }
+
 function startRecording(){
-  try{
-    const streams=[];
-    if(S.localStream)streams.push(...S.localStream.getTracks());
-    // Create a combined stream from all sources
-    const canvas=document.createElement('canvas');
-    canvas.width=1280;canvas.height=720;
-    const ctx=canvas.getContext('2d');
-    const videoEl=$('#video-grid video');
-    
-    // Simple: record local stream
-    const recordStream=S.screenStream||S.localStream;
-    if(!recordStream||recordStream.getTracks().length===0){toast('No media to record','warning');return;}
-    
-    S.recordedChunks=[];
-    S.mediaRecorder=new MediaRecorder(recordStream,{mimeType:'video/webm;codecs=vp9,opus'});
-    S.mediaRecorder.ondataavailable=e=>{if(e.data.size>0)S.recordedChunks.push(e.data);};
-    S.mediaRecorder.onstop=()=>uploadRecording();
+  try {
+    // Create an offscreen canvas to composite all participants + screen share
+    const recCanvas = document.createElement('canvas');
+    recCanvas.width = 1920; recCanvas.height = 1080;
+    const ctx = recCanvas.getContext('2d');
+    S._recCanvas = recCanvas;
+    S._recCtx = ctx;
+
+    // Mix all audio tracks into one destination
+    const audioCtx = new AudioContext();
+    const destination = audioCtx.createMediaStreamDestination();
+    S._recAudioCtx = audioCtx;
+
+    // Add local audio
+    if(S.localStream) {
+      S.localStream.getAudioTracks().forEach(t => {
+        const src = audioCtx.createMediaStreamSource(new MediaStream([t]));
+        src.connect(destination);
+      });
+    }
+    // Add screen share audio
+    if(S.screenStream) {
+      S.screenStream.getAudioTracks().forEach(t => {
+        const src = audioCtx.createMediaStreamSource(new MediaStream([t]));
+        src.connect(destination);
+      });
+    }
+    // Add all remote peer audio
+    S.peers.forEach((p) => {
+      if(p.stream) {
+        p.stream.getAudioTracks().forEach(t => {
+          try {
+            const src = audioCtx.createMediaStreamSource(new MediaStream([t]));
+            src.connect(destination);
+          } catch(e) { /* track may be ended */ }
+        });
+      }
+    });
+
+    // Composite video: draw all video tiles onto canvas at ~24fps
+    S._recAnimFrame = null;
+    function drawFrame() {
+      const W = recCanvas.width, H = recCanvas.height;
+      ctx.fillStyle = '#0f0f17';
+      ctx.fillRect(0, 0, W, H);
+
+      // Collect all video elements from the grid
+      const videos = Array.from(document.querySelectorAll('#video-grid video'));
+      const count = videos.length;
+
+      if(count === 0) {
+        ctx.fillStyle = '#9aa0a6';
+        ctx.font = '28px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('No video', W/2, H/2);
+      } else if(count === 1) {
+        // Single video: fill the canvas
+        _drawVideoFit(ctx, videos[0], 0, 0, W, H);
+      } else {
+        // Check for screen share mode (large main + small tiles)
+        const mainTile = document.querySelector('.video-tile.ss-main video');
+        if(mainTile) {
+          // Screen share layout: main takes 75% width, strip on right
+          const mainW = Math.floor(W * 0.75);
+          _drawVideoFit(ctx, mainTile, 0, 0, mainW, H);
+
+          const others = videos.filter(v => v !== mainTile);
+          const stripW = W - mainW;
+          const tileH = others.length > 0 ? Math.floor(H / Math.min(others.length, 6)) : H;
+          others.forEach((v, i) => {
+            if(i < 6) _drawVideoFit(ctx, v, mainW, i * tileH, stripW, tileH);
+          });
+        } else {
+          // Gallery layout: grid arrangement
+          const cols = count <= 2 ? 2 : count <= 4 ? 2 : count <= 9 ? 3 : 4;
+          const rows = Math.ceil(count / cols);
+          const tileW = Math.floor(W / cols);
+          const tileH = Math.floor(H / rows);
+          videos.forEach((v, i) => {
+            const col = i % cols;
+            const row = Math.floor(i / cols);
+            _drawVideoFit(ctx, v, col * tileW, row * tileH, tileW, tileH);
+          });
+        }
+      }
+
+      // Draw participant names
+      const tiles = document.querySelectorAll('#video-grid .video-tile');
+      ctx.font = '16px Inter, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'left';
+
+      // Timestamp overlay
+      ctx.font = '14px Inter, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.textAlign = 'right';
+      const elapsed = S.recordingStartTime ? Math.floor((Date.now() - S.recordingStartTime) / 1000) : 0;
+      const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
+      const ss = String(elapsed % 60).padStart(2, '0');
+      ctx.fillText(`REC ${mm}:${ss}`, W - 16, H - 16);
+
+      // Red recording dot
+      ctx.beginPath();
+      ctx.arc(W - 90, H - 20, 5, 0, Math.PI * 2);
+      ctx.fillStyle = '#e04040';
+      ctx.fill();
+
+      S._recAnimFrame = requestAnimationFrame(drawFrame);
+    }
+
+    drawFrame();
+
+    // Create combined stream: canvas video + mixed audio
+    const canvasStream = recCanvas.captureStream(24);
+    const combinedStream = new MediaStream([
+      ...canvasStream.getVideoTracks(),
+      ...destination.stream.getAudioTracks()
+    ]);
+
+    S.recordedChunks = [];
+    // Try VP9 first, fall back to VP8
+    let mimeType = 'video/webm;codecs=vp9,opus';
+    if(!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm;codecs=vp8,opus';
+    if(!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
+
+    S.mediaRecorder = new MediaRecorder(combinedStream, { mimeType, videoBitsPerSecond: 4000000 });
+    S.mediaRecorder.ondataavailable = e => { if(e.data.size > 0) S.recordedChunks.push(e.data); };
+    S.mediaRecorder.onstop = () => uploadRecording();
     S.mediaRecorder.start(1000);
-    S.isRecording=true;
-    S.recordingStartTime=Date.now();
-    S.socket.emit('toggle-recording',{recording:true});
+    S.isRecording = true;
+    S.recordingStartTime = Date.now();
+    S.socket.emit('toggle-recording', { recording: true });
     updateToolbar();
-    toast('⏺️ Recording started','success');
-  }catch(e){toast('❌ Recording failed: '+e.message,'error');}
+    toast('\u23FA\uFE0F Recording started \u2014 capturing entire room', 'success');
+  } catch(e) { toast('\u274C Recording failed: ' + e.message, 'error'); console.error(e); }
 }
+
+function _drawVideoFit(ctx, video, x, y, w, h) {
+  try {
+    if(!video || video.readyState < 2 || video.videoWidth === 0) {
+      ctx.fillStyle = '#1a1a2e';
+      ctx.fillRect(x, y, w, h);
+      ctx.fillStyle = '#4a4d52';
+      ctx.font = '14px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('No video', x + w/2, y + h/2);
+      return;
+    }
+    // Maintain aspect ratio (cover)
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const scale = Math.max(w / vw, h / vh);
+    const sw = w / scale, sh = h / scale;
+    const sx = (vw - sw) / 2, sy = (vh - sh) / 2;
+    ctx.drawImage(video, sx, sy, sw, sh, x, y, w, h);
+    // Border
+    ctx.strokeStyle = '#2a2a3e';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x, y, w, h);
+  } catch(e) { /* video element may not be ready */ }
+}
+
 function stopRecording(){
-  if(S.mediaRecorder&&S.mediaRecorder.state!=='inactive'){
+  if(S._recAnimFrame) { cancelAnimationFrame(S._recAnimFrame); S._recAnimFrame = null; }
+  if(S._recAudioCtx) { try { S._recAudioCtx.close(); } catch(e) {} S._recAudioCtx = null; }
+  S._recCanvas = null; S._recCtx = null;
+  if(S.mediaRecorder && S.mediaRecorder.state !== 'inactive'){
     S.mediaRecorder.stop();
   }
-  S.isRecording=false;
-  S.socket.emit('toggle-recording',{recording:false});
+  S.isRecording = false;
+  S.socket.emit('toggle-recording', { recording: false });
   updateToolbar();
-  toast('⏹️ Recording stopped, uploading...','info');
+  toast('\u23F9\uFE0F Recording stopped, uploading...', 'info');
 }
+
 async function uploadRecording(){
   try{
-    const blob=new Blob(S.recordedChunks,{type:'video/webm'});
-    const duration=S.recordingStartTime?Date.now()-S.recordingStartTime:0;
-    const fd=new FormData();
-    fd.append('recording',blob,`recording-${Date.now()}.webm`);
-    fd.append('roomId',S.roomId||'');
-    fd.append('roomName',S.roomName||'');
-    fd.append('roomType',S.roomType||'meeting');
-    fd.append('recordedBy',S.socket?.id||'');
-    fd.append('recordedByName',S.userName);
-    fd.append('duration',String(duration));
+    const blob = new Blob(S.recordedChunks, { type: 'video/webm' });
+    const duration = S.recordingStartTime ? Date.now() - S.recordingStartTime : 0;
+    const fd = new FormData();
+    fd.append('recording', blob, `recording-${Date.now()}.webm`);
+    fd.append('roomId', S.roomId || '');
+    fd.append('roomName', S.roomName || '');
+    fd.append('roomType', S.roomType || 'meeting');
+    fd.append('recordedBy', S.socket?.id || '');
+    fd.append('recordedByName', S.userName);
+    fd.append('duration', String(duration));
     // Include transcript
-    const transcriptText=S.transcriptEntries.map(t=>`[${t.speaker}]: ${t.text}`).join('\n');
-    fd.append('transcript',transcriptText);
-    
-    const r=await fetch('/api/recordings/upload',{method:'POST',body:fd});
-    const data=await r.json();
-    toast('✅ Recording uploaded!','success');
-    
+    const transcriptText = S.transcriptEntries.map(t => `[${t.speaker}]: ${t.text}`).join('\n');
+    fd.append('transcript', transcriptText);
+    // Include participant names
+    const participants = [S.userName];
+    S.peers.forEach(p => participants.push(p.name));
+    fd.append('participants', JSON.stringify(participants));
+
+    const r = await fetch('/api/recordings/upload', { method: 'POST', body: fd });
+    const data = await r.json();
+    toast('\u2705 Recording uploaded!', 'success');
+
     // Auto-generate summary
-    if(S.transcriptEntries.length>0){
-      setTimeout(()=>window.generateSummary(data.id),500);
+    if(S.transcriptEntries.length > 0){
+      setTimeout(() => window.generateSummary(data.id), 500);
     }
-  }catch(e){toast('❌ Upload failed','error');console.error(e);}
+  } catch(e) { toast('\u274C Upload failed', 'error'); console.error(e); }
 }
 
 // ─── Live Transcription ─────────────────────────────────────────
@@ -1682,7 +1926,8 @@ function enterMeeting(data){
   updateHostUI();updateToolbar();updateVideoGrid();renderParticipants();updateBadges();startTimer();
   applyMeetingRoleVisibility();
   initAnnotationCanvas();
-  if(data.participants)data.participants.forEach(p=>{if(p.id!==S.socket.id && !S.peers.has(p.id))createPeer(p.id,p.name,p.role,false,p.audioEnabled,p.videoEnabled);});
+  // Create peers for existing participants — WE initiate since we're the new joiner
+  if(data.participants)data.participants.forEach(p=>{if(p.id!==S.socket.id && !S.peers.has(p.id))createPeer(p.id,p.name,p.role,true,p.audioEnabled,p.videoEnabled);});
 }
 
 function leaveMeeting(){
@@ -2681,11 +2926,11 @@ function init(){
     $('#meeting-toolbar').classList.add('collapsed');
   }
 
-  // ── Toolbar Drag to Move ──
+  // ── Toolbar Drag (from all edges) + Reset ──
   (function initToolbarDrag() {
     const tb = $('#meeting-toolbar');
-    const handle = $('#toolbar-drag-handle');
     let isDragging = false, startX, startY, origLeft, origTop;
+    let dragOffsetX = 0, dragOffsetY = 0;
 
     function makeFloating() {
       if (tb.classList.contains('floating')) return;
@@ -2696,16 +2941,41 @@ function init(){
       tb.style.transform = 'translateX(-50%)';
     }
 
-    handle.addEventListener('mousedown', (e) => {
+    function resetToolbarPosition() {
+      tb.classList.remove('floating');
+      tb.style.left = '';
+      tb.style.top = '';
+      tb.style.bottom = '';
+      tb.style.transform = '';
+      tb.style.right = '';
+      toast('\u2705 Toolbar reset', 'info');
+    }
+    // Expose globally for the reset button
+    window._resetToolbar = resetToolbarPosition;
+
+    // Make the entire toolbar edge-draggable (not just the handle)
+    tb.addEventListener('mousedown', (e) => {
+      // Don't drag if clicking a button, input, or interactive element
+      const tag = e.target.tagName.toLowerCase();
+      const isInteractive = tag === 'button' || tag === 'input' || tag === 'select' || tag === 'textarea' ||
+                            e.target.closest('button') || e.target.closest('.toolbar-btn') || e.target.closest('.toolbar-btn-end');
+      // Allow drag from: the drag handle, the toolbar background, toolbar dividers
+      const isDragHandle = e.target.id === 'toolbar-drag-handle' || e.target.classList.contains('toolbar-divider');
+      // Allow drag from edges: if click is near top/bottom 8px of toolbar, or the gap between buttons
+      const rect = tb.getBoundingClientRect();
+      const nearEdge = (e.clientY - rect.top < 8) || (rect.bottom - e.clientY < 8);
+
+      if(!isDragHandle && !nearEdge && isInteractive) return;
+
       e.preventDefault();
       makeFloating();
       isDragging = true;
       tb.classList.add('dragging');
-      const rect = tb.getBoundingClientRect();
+      const tbRect = tb.getBoundingClientRect();
       startX = e.clientX;
       startY = e.clientY;
-      origLeft = rect.left + rect.width / 2;
-      origTop = rect.top;
+      origLeft = tbRect.left + tbRect.width / 2;
+      origTop = tbRect.top;
     });
 
     document.addEventListener('mousemove', (e) => {
@@ -2714,9 +2984,12 @@ function init(){
       const dy = e.clientY - startY;
       const newLeft = origLeft + dx;
       const newTop = origTop + dy;
-      tb.style.left = newLeft + 'px';
+      // Clamp to viewport
+      const clampedLeft = Math.max(tb.offsetWidth / 2, Math.min(window.innerWidth - tb.offsetWidth / 2, newLeft));
+      const clampedTop = Math.max(0, Math.min(window.innerHeight - 60, newTop));
+      tb.style.left = clampedLeft + 'px';
       tb.style.bottom = 'auto';
-      tb.style.top = newTop + 'px';
+      tb.style.top = clampedTop + 'px';
       tb.style.transform = 'translateX(-50%)';
     });
 
@@ -2726,16 +2999,14 @@ function init(){
       tb.classList.remove('dragging');
     });
 
-    // Double-click handle to reset position
-    handle.addEventListener('dblclick', () => {
-      tb.classList.remove('floating');
-      tb.style.left = '';
-      tb.style.top = '';
-      tb.style.bottom = '';
-      tb.style.transform = '';
+    // Double-click anywhere on toolbar to reset
+    tb.addEventListener('dblclick', (e) => {
+      // Don't reset if double-clicking a button
+      if(e.target.closest('button') || e.target.closest('.toolbar-btn') || e.target.closest('.toolbar-btn-end')) return;
+      resetToolbarPosition();
     });
   })();
-  $('#toolbar-annotate').addEventListener('click',()=>{
+    $('#toolbar-annotate').addEventListener('click',()=>{
     S.annotating=!S.annotating;
     $('#annotation-toolbar').classList.toggle('open',S.annotating);
     $('#annotation-canvas').classList.toggle('active',S.annotating);

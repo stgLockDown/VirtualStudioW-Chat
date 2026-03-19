@@ -7,6 +7,16 @@ const SERVER_URL = process.env.VS_SERVER_URL || 'https://virtualstudiow-chat-pro
 
 const IS_DEV = process.argv.includes('--dev');
 
+// ── Fix taskbar pinning for portable EXE ────────────────────────────────────
+// Set App User Model ID so Windows can properly pin the app
+app.setAppUserModelId('com.virtualstudio.chat');
+
+// If running as a portable app, relaunch from the original exe path
+// This prevents "pathway not found" when pinned to taskbar
+if (process.env.PORTABLE_EXECUTABLE_FILE) {
+  app.setPath('userData', path.join(path.dirname(process.env.PORTABLE_EXECUTABLE_FILE), '.virtualstudio-data'));
+}
+
 let splash, mainWin, chatWin, tray;
 
 // ── Splash screen ──────────────────────────────────────────────────────────────
@@ -221,6 +231,69 @@ app.whenReady().then(() => {
   ipcMain.on('chat-notify', (event, data) => {
     if (mainWin && !mainWin.isDestroyed()) {
       mainWin.webContents.send('chat-notification', data);
+    }
+  });
+
+  // ── Remote Control: inject mouse/keyboard events into the active display ──
+  ipcMain.on('inject-input', (event, data) => {
+    // Only inject into the main window (which shows the shared screen)
+    const targetWin = mainWin;
+    if (!targetWin || targetWin.isDestroyed()) return;
+
+    const wc = targetWin.webContents;
+    const bounds = targetWin.getBounds();
+
+    if (['mousemove', 'mousedown', 'mouseup', 'click', 'dblclick'].includes(data.type)) {
+      // Convert normalised (0-1) coords to window pixels
+      const x = Math.round((data.x || 0) * bounds.width);
+      const y = Math.round((data.y || 0) * bounds.height);
+
+      if (data.type === 'mousemove') {
+        wc.sendInputEvent({ type: 'mouseMove', x, y });
+      } else if (data.type === 'mousedown') {
+        wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+      } else if (data.type === 'mouseup') {
+        wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+      } else if (data.type === 'click') {
+        wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+        wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+      } else if (data.type === 'dblclick') {
+        wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 2 });
+        wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 2 });
+      }
+    } else if (data.type === 'wheel') {
+      const x = Math.round((data.x || 0) * bounds.width);
+      const y = Math.round((data.y || 0) * bounds.height);
+      wc.sendInputEvent({ type: 'mouseWheel', x, y, deltaX: data.deltaX || 0, deltaY: -(data.deltaY || 0) });
+    } else if (data.type === 'keydown' || data.type === 'keyup') {
+      const keyCode = data.key || '';
+      // Map common keys
+      const keyMap = {
+        'Enter': 'Return', 'Backspace': 'Backspace', 'Tab': 'Tab',
+        'Escape': 'Escape', 'ArrowUp': 'Up', 'ArrowDown': 'Down',
+        'ArrowLeft': 'Left', 'ArrowRight': 'Right', 'Delete': 'Delete',
+        ' ': 'Space', 'Home': 'Home', 'End': 'End',
+        'PageUp': 'PageUp', 'PageDown': 'PageDown'
+      };
+      const electronKey = keyMap[keyCode] || keyCode;
+
+      const modifiers = [];
+      if (data.shiftKey) modifiers.push('shift');
+      if (data.ctrlKey) modifiers.push('control');
+      if (data.altKey) modifiers.push('alt');
+      if (data.metaKey) modifiers.push('meta');
+
+      if (data.type === 'keydown') {
+        // For single characters, use char event for proper typing
+        if (keyCode.length === 1) {
+          wc.sendInputEvent({ type: 'keyDown', keyCode: electronKey, modifiers });
+          wc.sendInputEvent({ type: 'char', keyCode: electronKey, modifiers });
+        } else {
+          wc.sendInputEvent({ type: 'keyDown', keyCode: electronKey, modifiers });
+        }
+      } else {
+        wc.sendInputEvent({ type: 'keyUp', keyCode: electronKey, modifiers });
+      }
     }
   });
 

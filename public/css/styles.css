@@ -327,6 +327,11 @@ input::placeholder { color: var(--text-muted); }
 .toolbar-drag-handle { cursor: grab; padding: 4px 6px; font-size: 16px; color: var(--text-muted); opacity: 0.5; user-select: none; display: flex; align-items: center; transition: opacity 0.2s; letter-spacing: 2px; }
 .toolbar-drag-handle:hover { opacity: 1; color: var(--text-primary); }
 .toolbar-drag-handle:active { cursor: grabbing; }
+.meeting-toolbar::before { content: ''; position: absolute; top: -4px; left: 0; right: 0; height: 8px; cursor: grab; z-index: 1; }
+.meeting-toolbar::after { content: ''; position: absolute; bottom: -4px; left: 0; right: 0; height: 8px; cursor: grab; z-index: 1; }
+.meeting-toolbar.dragging { cursor: grabbing !important; }
+.meeting-toolbar.dragging * { cursor: grabbing !important; }
+#toolbar-reset .toolbar-btn-icon { font-size: 16px; }
 .toolbar-collapse-btn { background: none; border: 1px solid var(--border-color); color: var(--text-secondary); width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; cursor: pointer; transition: all 0.2s; margin-right: 4px; flex-shrink: 0; }
 .toolbar-collapse-btn:hover { background: var(--bg-surface-hover); color: var(--text-primary); }
 .toolbar-btn { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 12px; border-radius: var(--radius-md); position: relative; min-width: 56px; }

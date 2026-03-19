@@ -47,7 +47,12 @@
       "installerHeaderIcon": "build/icon.ico",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Virtual Studio"
+      "shortcutName": "Virtual Studio",
+      "menuCategory": "Virtual Studio"
+    },
+    "portable": {
+      "artifactName": "VirtualStudio-${version}-Portable.${ext}",
+      "requestExecutionLevel": "user"
     },
     "mac": {
       "target": [
