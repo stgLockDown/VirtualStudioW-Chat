@@ -3,6 +3,12 @@
   "version": "1.3.0",
   "description": "Virtual Studio — Electron launcher for VirtualStudioW-Chat",
   "main": "main.js",
+  "author": "VirtualStudio",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stgLockDown/VirtualStudioW-Chat.git"
+  },
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
