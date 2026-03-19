@@ -1852,6 +1852,26 @@ function updateToolbar(){
   $('#toolbar-record').querySelector('.toolbar-btn-icon').textContent=S.isRecording?'⏹️':'⏺️';
   $('#toolbar-record').querySelector('.toolbar-btn-label').textContent=S.isRecording?'Stop':'Record';
   $('#toolbar-transcript').classList.toggle('active',S.transcriptOpen);
+  // Push state to floating toolbar window (Electron only)
+  if(window.electronAPI && window.electronAPI.toolbarSetState){
+    const isPrivileged = S.isHost || isPrivilegedRole();
+    const sharer = Array.from(S.peers.entries()).find(([_,p])=>p.screenSharing);
+    window.electronAPI.toolbarSetState({
+      audioEnabled:    S.audioEnabled,
+      videoEnabled:    S.videoEnabled,
+      screenSharing:   S.screenSharing,
+      annotating:      S.annotating,
+      remoteControlling: !!S.remoteControlling,
+      showRemote:      !!(sharer || S.remoteControlling),
+      handRaised:      S.handRaised,
+      isRecording:     S.isRecording,
+      transcriptOpen:  S.transcriptOpen,
+      isHost:          S.isHost,
+      isPrivileged:    isPrivileged,
+      participantCount: S.participants.length,
+      unreadChat:      S.unreadChat||0,
+    });
+  }
 }
 function updateBadges(){
   const pb=$('#participants-badge');pb.style.display=S.participants.length?'flex':'none';pb.textContent=S.participants.length;
@@ -1931,6 +1951,8 @@ function enterMeeting(data){
 }
 
 function leaveMeeting(){
+  // Hide floating toolbar if in Electron
+  if(window.electronAPI && window.electronAPI.toolbarHide) window.electronAPI.toolbarHide();
   if(S.isRecording)stopRecording();
   stopTranscription();
   if(S.socket)S.socket.emit('leave-room');
@@ -2926,11 +2948,64 @@ function init(){
     $('#meeting-toolbar').classList.add('collapsed');
   }
 
-  // ── Toolbar Drag (from all edges) + Reset ──
+  // ── Toolbar Drag + Reset ──
+  // In Electron: toolbar lives in a separate always-on-top BrowserWindow that
+  //   can be dragged anywhere on screen (even outside the app window).
+  //   The DOM toolbar is hidden; drag is handled natively by -webkit-app-region.
+  // In browser: DOM toolbar is used with unclamped free positioning.
   (function initToolbarDrag() {
     const tb = $('#meeting-toolbar');
+
+    // ── Electron: hide DOM toolbar, use floating toolbarWin instead ──────────
+    if (window.electronAPI && window.electronAPI.toolbarShow) {
+      // Hide the in-page toolbar — the floating window replaces it
+      tb.style.display = 'none';
+
+      // Show the floating toolbar window
+      window.electronAPI.toolbarShow();
+
+      // Listen for button actions coming FROM the floating toolbar window
+      window.electronAPI.onToolbarAction((action) => {
+        switch(action) {
+          case 'mic':           toggleAudio(); break;
+          case 'camera':        toggleVideo(); break;
+          case 'screen':        toggleScreenShare(); break;
+          case 'annotate':
+            S.annotating = !S.annotating;
+            $('#annotation-toolbar').classList.toggle('open', S.annotating);
+            $('#annotation-canvas').classList.toggle('active', S.annotating);
+            updateToolbar();
+            break;
+          case 'remote':        $('#toolbar-remote').click(); break;
+          case 'participants':  togglePanel('participants'); break;
+          case 'chat':          togglePanel('chat'); break;
+          case 'studio-chat':   window._openChat && window._openChat(); break;
+          case 'transcript':    togglePanel('transcript'); break;
+          case 'reactions':     $('#reactions-picker').classList.toggle('open'); break;
+          case 'hand':
+            S.handRaised = !S.handRaised;
+            S.socket.emit('toggle-hand', {raised: S.handRaised});
+            updateToolbar(); updateVideoGrid();
+            break;
+          case 'record':        toggleRecording(); break;
+          case 'breakout':      togglePanel('breakout'); break;
+          case 'theme':         $('#toolbar-theme').click(); break;
+          case 'bots':          window.openBotPanel && window.openBotPanel(); break;
+          case 'leave':         openModal('leave-modal'); break;
+        }
+      });
+
+      // Reset just re-centres the floating window
+      window._resetToolbar = () => {
+        // Tell the main process to re-centre the toolbar window
+        window.electronAPI.toolbarSetState({ _resetPosition: true });
+        toast('\u2705 Toolbar reset', 'info');
+      };
+      return; // Don't set up DOM drag in Electron
+    }
+
+    // ── Browser: DOM toolbar with free positioning (no viewport clamping) ────
     let isDragging = false, startX, startY, origLeft, origTop;
-    let dragOffsetX = 0, dragOffsetY = 0;
 
     function makeFloating() {
       if (tb.classList.contains('floating')) return;
@@ -2950,23 +3025,16 @@ function init(){
       tb.style.right = '';
       toast('\u2705 Toolbar reset', 'info');
     }
-    // Expose globally for the reset button
     window._resetToolbar = resetToolbarPosition;
 
-    // Make the entire toolbar edge-draggable (not just the handle)
     tb.addEventListener('mousedown', (e) => {
-      // Don't drag if clicking a button, input, or interactive element
       const tag = e.target.tagName.toLowerCase();
       const isInteractive = tag === 'button' || tag === 'input' || tag === 'select' || tag === 'textarea' ||
                             e.target.closest('button') || e.target.closest('.toolbar-btn') || e.target.closest('.toolbar-btn-end');
-      // Allow drag from: the drag handle, the toolbar background, toolbar dividers
       const isDragHandle = e.target.id === 'toolbar-drag-handle' || e.target.classList.contains('toolbar-divider');
-      // Allow drag from edges: if click is near top/bottom 8px of toolbar, or the gap between buttons
       const rect = tb.getBoundingClientRect();
       const nearEdge = (e.clientY - rect.top < 8) || (rect.bottom - e.clientY < 8);
-
-      if(!isDragHandle && !nearEdge && isInteractive) return;
-
+      if (!isDragHandle && !nearEdge && isInteractive) return;
       e.preventDefault();
       makeFloating();
       isDragging = true;
@@ -2982,14 +3050,10 @@ function init(){
       if (!isDragging) return;
       const dx = e.clientX - startX;
       const dy = e.clientY - startY;
-      const newLeft = origLeft + dx;
-      const newTop = origTop + dy;
-      // Clamp to viewport
-      const clampedLeft = Math.max(tb.offsetWidth / 2, Math.min(window.innerWidth - tb.offsetWidth / 2, newLeft));
-      const clampedTop = Math.max(0, Math.min(window.innerHeight - 60, newTop));
-      tb.style.left = clampedLeft + 'px';
+      // No clamping — allow free movement anywhere on screen
+      tb.style.left = (origLeft + dx) + 'px';
       tb.style.bottom = 'auto';
-      tb.style.top = clampedTop + 'px';
+      tb.style.top = (origTop + dy) + 'px';
       tb.style.transform = 'translateX(-50%)';
     });
 
@@ -2999,10 +3063,8 @@ function init(){
       tb.classList.remove('dragging');
     });
 
-    // Double-click anywhere on toolbar to reset
     tb.addEventListener('dblclick', (e) => {
-      // Don't reset if double-clicking a button
-      if(e.target.closest('button') || e.target.closest('.toolbar-btn') || e.target.closest('.toolbar-btn-end')) return;
+      if (e.target.closest('button') || e.target.closest('.toolbar-btn') || e.target.closest('.toolbar-btn-end')) return;
       resetToolbarPosition();
     });
   })();

@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Virtual Studio Toolbar</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    background: transparent;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+  }
+
+  #outer {
+    padding: 8px 8px 12px;
+    cursor: default;
+  }
+
+  #toolbar {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    background: #111119;
+    border: 1px solid rgba(255,255,255,0.09);
+    border-radius: 14px;
+    padding: 6px 10px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.4);
+    position: relative;
+    -webkit-app-region: drag;
+  }
+
+  button, .toolbar-divider {
+    -webkit-app-region: no-drag;
+  }
+
+  #drag-handle {
+    color: rgba(255,255,255,0.2);
+    font-size: 16px;
+    padding: 0 4px;
+    cursor: grab;
+    flex-shrink: 0;
+    -webkit-app-region: drag;
+  }
+
+  .toolbar-divider {
+    width: 1px;
+    height: 28px;
+    background: rgba(255,255,255,0.1);
+    margin: 0 4px;
+    flex-shrink: 0;
+  }
+
+  .tbtn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    padding: 5px 7px;
+    cursor: pointer;
+    color: #9aa0a6;
+    transition: background 0.15s, color 0.15s;
+    min-width: 46px;
+    position: relative;
+  }
+  .tbtn:hover { background: rgba(255,255,255,0.07); color: #e8eaed; }
+  .tbtn.active { background: rgba(45,140,255,0.18); color: #2d8cff; }
+  .tbtn.off { color: #cd2553; background: rgba(205,37,83,0.12); }
+  .tbtn.danger:hover { background: rgba(205,37,83,0.2); color: #cd2553; }
+
+  .tbtn-icon { font-size: 18px; line-height: 1; }
+  .tbtn-label { font-size: 9px; font-weight: 500; letter-spacing: 0.3px; text-transform: uppercase; }
+
+  .badge {
+    position: absolute;
+    top: 2px; right: 2px;
+    background: #cd2553;
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    border-radius: 10px;
+    padding: 1px 4px;
+    min-width: 14px;
+    text-align: center;
+    line-height: 12px;
+    display: none;
+  }
+
+  #btn-leave {
+    background: #cd2553;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 7px 16px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.15s;
+    -webkit-app-region: no-drag;
+    margin-left: 4px;
+  }
+  #btn-leave:hover { background: #a81f44; }
+</style>
+<script src="https://sites.super.myninja.ai/_assets/ninja-daytona-script.js"></script>
+</head>
+<body>
+<div id="outer">
+  <div id="toolbar">
+    <span id="drag-handle" title="Drag toolbar">&#x283f;</span>
+
+    <button class="tbtn" id="btn-mic" title="Toggle Microphone">
+      <span class="tbtn-icon">&#x1f3a4;</span>
+      <span class="tbtn-label">Mic</span>
+    </button>
+
+    <button class="tbtn" id="btn-camera" title="Toggle Camera">
+      <span class="tbtn-icon">&#x1f4f7;</span>
+      <span class="tbtn-label">Camera</span>
+    </button>
+
+    <button class="tbtn" id="btn-screen" title="Share Screen">
+      <span class="tbtn-icon">&#x1f5a5;&#xfe0f;</span>
+      <span class="tbtn-label">Share</span>
+    </button>
+
+    <button class="tbtn" id="btn-annotate" title="Annotate">
+      <span class="tbtn-icon">&#x270f;&#xfe0f;</span>
+      <span class="tbtn-label">Annotate</span>
+    </button>
+
+    <button class="tbtn" id="btn-remote" title="Remote Control" style="display:none;">
+      <span class="tbtn-icon">&#x1f5b1;&#xfe0f;</span>
+      <span class="tbtn-label">Control</span>
+    </button>
+
+    <div class="toolbar-divider"></div>
+
+    <button class="tbtn" id="btn-participants" title="Participants">
+      <span class="tbtn-icon">&#x1f465;</span>
+      <span class="tbtn-label">People</span>
+      <span class="badge" id="badge-participants">0</span>
+    </button>
+
+    <button class="tbtn" id="btn-chat" title="In-room Chat">
+      <span class="tbtn-icon">&#x1f4ac;</span>
+      <span class="tbtn-label">Chat</span>
+      <span class="badge" id="badge-chat">0</span>
+    </button>
+
+    <button class="tbtn" id="btn-studio-chat" title="Studio Chat pop-out">
+      <span class="tbtn-icon">&#x1f5e8;&#xfe0f;</span>
+      <span class="tbtn-label">Studio Chat</span>
+    </button>
+
+    <button class="tbtn" id="btn-transcript" title="Transcript">
+      <span class="tbtn-icon">&#x1f4dd;</span>
+      <span class="tbtn-label">Transcript</span>
+    </button>
+
+    <button class="tbtn" id="btn-reactions" title="Reactions">
+      <span class="tbtn-icon">&#x1f600;</span>
+      <span class="tbtn-label">React</span>
+    </button>
+
+    <button class="tbtn" id="btn-hand" title="Raise Hand">
+      <span class="tbtn-icon">&#x270b;</span>
+      <span class="tbtn-label">Hand</span>
+    </button>
+
+    <div class="toolbar-divider"></div>
+
+    <button class="tbtn" id="btn-record" title="Record Meeting">
+      <span class="tbtn-icon">&#x23fa;&#xfe0f;</span>
+      <span class="tbtn-label">Record</span>
+    </button>
+
+    <button class="tbtn" id="btn-breakout" title="Breakout Rooms" style="display:none;">
+      <span class="tbtn-icon">&#x1f3e0;</span>
+      <span class="tbtn-label">Breakout</span>
+    </button>
+
+    <button class="tbtn" id="btn-theme" title="Theme" style="display:none;">
+      <span class="tbtn-icon">&#x1f3a8;</span>
+      <span class="tbtn-label">Theme</span>
+    </button>
+
+    <button class="tbtn" id="btn-bots" title="Bots" style="display:none;">
+      <span class="tbtn-icon">&#x1f916;</span>
+      <span class="tbtn-label">Bots</span>
+    </button>
+
+    <div class="toolbar-divider"></div>
+
+    <button id="btn-leave">Leave</button>
+  </div>
+</div>
+
+<script>
+  const api = window.electronAPI;
+
+  const ACTIONS = {
+    'btn-mic':          'mic',
+    'btn-camera':       'camera',
+    'btn-screen':       'screen',
+    'btn-annotate':     'annotate',
+    'btn-remote':       'remote',
+    'btn-participants': 'participants',
+    'btn-chat':         'chat',
+    'btn-studio-chat':  'studio-chat',
+    'btn-transcript':   'transcript',
+    'btn-reactions':    'reactions',
+    'btn-hand':         'hand',
+    'btn-record':       'record',
+    'btn-breakout':     'breakout',
+    'btn-theme':        'theme',
+    'btn-bots':         'bots',
+    'btn-leave':        'leave',
+  };
+
+  Object.entries(ACTIONS).forEach(([id, action]) => {
+    const btn = document.getElementById(id);
+    if (btn) {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (api) api.toolbarAction(action);
+      });
+    }
+  });
+
+  if (api) {
+    api.onToolbarState((state) => {
+      setBtn('btn-mic', !state.audioEnabled, false, state.audioEnabled ? '\ud83c\udfa4' : '\ud83d\udd07');
+      setBtn('btn-camera', !state.videoEnabled, false);
+      setBtn('btn-screen', false, state.screenSharing);
+      setBtn('btn-annotate', false, state.annotating);
+      setBtn('btn-remote', false, state.remoteControlling);
+      document.getElementById('btn-remote').style.display = state.showRemote ? 'flex' : 'none';
+      setBtn('btn-hand', false, state.handRaised);
+      setBtn('btn-record', false, state.isRecording);
+      document.getElementById('btn-record').querySelector('.tbtn-icon').textContent =
+        state.isRecording ? '\u23f9\ufe0f' : '\u23fa\ufe0f';
+      document.getElementById('btn-record').querySelector('.tbtn-label').textContent =
+        state.isRecording ? 'Stop' : 'Record';
+      setBtn('btn-transcript', false, state.transcriptOpen);
+      document.getElementById('btn-breakout').style.display =
+        (state.isHost || state.isPrivileged) ? 'flex' : 'none';
+      document.getElementById('btn-record').style.display =
+        state.isPrivileged ? 'flex' : 'none';
+      document.getElementById('btn-theme').style.display =
+        state.isHost ? 'flex' : 'none';
+      document.getElementById('btn-bots').style.display =
+        state.isPrivileged ? 'flex' : 'none';
+      setBadge('badge-participants', state.participantCount);
+      setBadge('badge-chat', state.unreadChat);
+      const remoteLabel = document.getElementById('btn-remote').querySelector('.tbtn-label');
+      if (remoteLabel) remoteLabel.textContent = state.remoteControlling ? 'Stop Control' : 'Control';
+    });
+  }
+
+  function setBtn(id, isOff, isActive, icon) {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.classList.toggle('off', !!isOff);
+    btn.classList.toggle('active', !!isActive);
+    if (icon) btn.querySelector('.tbtn-icon').textContent = icon;
+  }
+
+  function setBadge(id, count) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (count > 0) {
+      el.style.display = 'block';
+      el.textContent = count > 99 ? '99+' : count;
+    } else {
+      el.style.display = 'none';
+    }
+  }
+</script>
+</body>
+</html>

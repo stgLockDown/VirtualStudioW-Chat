@@ -2,7 +2,7 @@ const { app, BrowserWindow, screen, ipcMain, desktopCapturer, session, Menu, Tra
 const path = require('path');
 const https = require('https');
 
-// ── Target server URL ──────────────────────────────────────────────────────────
+// ── Target server URL ────────────────────────────────────────────────────────
 // Change this to your Railway deployment URL
 const SERVER_URL = process.env.VS_SERVER_URL || 'https://virtualstudiow-chat-production.up.railway.app';
 
@@ -16,12 +16,9 @@ if (process.env.PORTABLE_EXECUTABLE_FILE) {
   app.setPath('userData', path.join(path.dirname(process.env.PORTABLE_EXECUTABLE_FILE), '.virtualstudio-data'));
 }
 
-let splash, mainWin, chatWin, tray;
+let splash, mainWin, chatWin, toolbarWin, tray;
 
-// ── Auto-update check ───────────────────────────────────────────────────────
-// Checks the GitHub releases API for a newer version. If found, prompts the
-// user to download it. The actual app content (HTML/CSS/JS) is always fresh
-// from Railway — this only covers launcher-level changes (Electron, preload, IPC).
+// ── Auto-update check ────────────────────────────────────────────────────────
 function checkForUpdates(silent = false) {
   const options = {
     hostname: 'api.github.com',
@@ -39,7 +36,6 @@ function checkForUpdates(silent = false) {
         if (!latestTag) return;
 
         if (compareVersions(latestTag, CURRENT_VERSION) > 0) {
-          // Newer version available
           const exeAsset = (release.assets || []).find(a => a.name.endsWith('.exe'));
           const downloadUrl = exeAsset ? exeAsset.browser_download_url : release.html_url;
 
@@ -47,15 +43,13 @@ function checkForUpdates(silent = false) {
             type: 'info',
             title: 'Update Available',
             message: `Virtual Studio v${latestTag} is available!`,
-            detail: `You are running v${CURRENT_VERSION}.\n\nNote: Your app content is always up-to-date via the server — this update only includes launcher improvements (performance, screen sharing, etc.).\n\n${release.body ? release.body.slice(0, 300) : ''}`,
+            detail: `You are running v${CURRENT_VERSION}.\n\nNote: Your app content is always up-to-date via the server — this update only includes launcher improvements.\n\n${release.body ? release.body.slice(0, 300) : ''}`,
             buttons: ['Download Update', 'Remind Me Later'],
             defaultId: 0,
             cancelId: 1,
             icon: nativeImage.createFromPath(path.join(__dirname, 'build', 'icon.png'))
           }).then(({ response }) => {
-            if (response === 0) {
-              shell.openExternal(downloadUrl);
-            }
+            if (response === 0) shell.openExternal(downloadUrl);
           });
         } else if (!silent) {
           dialog.showMessageBox(mainWin, {
@@ -71,7 +65,6 @@ function checkForUpdates(silent = false) {
   }).on('error', () => { /* silently ignore network errors */ });
 }
 
-// Simple semver compare: returns >0 if a > b, 0 if equal, <0 if a < b
 function compareVersions(a, b) {
   const pa = a.split('.').map(Number);
   const pb = b.split('.').map(Number);
@@ -82,7 +75,7 @@ function compareVersions(a, b) {
   return 0;
 }
 
-// ── Splash screen ──────────────────────────────────────────────────────────────
+// ── Splash screen ─────────────────────────────────────────────────────────────
 function createSplash() {
   splash = new BrowserWindow({
     width: 440,
@@ -149,7 +142,7 @@ function createSplash() {
   `));
 }
 
-// ── Error page ─────────────────────────────────────────────────────────────────
+// ── Error page ────────────────────────────────────────────────────────────────
 function getErrorPage(errorDesc) {
   return 'data:text/html,' + encodeURIComponent(`
     <!DOCTYPE html>
@@ -191,11 +184,73 @@ function getErrorPage(errorDesc) {
   `);
 }
 
-// ── Main window ────────────────────────────────────────────────────────────────
-app.whenReady().then(() => {
-  // Remove default menu bar
-  Menu.setApplicationMenu(null);
+// ── Floating Toolbar Window ───────────────────────────────────────────────────
+// A separate always-on-top frameless transparent window that hosts the toolbar.
+// It can be dragged anywhere on screen — even outside the main app window.
+function createToolbarWin() {
+  // Start it hidden; show it when the main app signals a meeting has started
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
 
+  // Estimate toolbar size: roughly 900px wide x 72px tall (auto-sized)
+  const tbWidth  = 920;
+  const tbHeight = 80;
+  const tbX = Math.round((width - tbWidth) / 2);
+  const tbY = height - tbHeight - 12;
+
+  toolbarWin = new BrowserWindow({
+    width:  tbWidth,
+    height: tbHeight,
+    x: tbX,
+    y: tbY,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    focusable: true,
+    hasShadow: false,
+    // Allow moving beyond screen edges
+    enableLargerThanScreen: true,
+    icon: path.join(__dirname, 'build', 'icon.ico'),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true
+    },
+    show: false
+  });
+
+  toolbarWin.loadURL(`${SERVER_URL}/toolbar.html`);
+
+  // Once loaded, size the window to fit the actual toolbar content
+  toolbarWin.webContents.on('did-finish-load', () => {
+    // Auto-resize after a tick to let the DOM settle
+    setTimeout(() => {
+      toolbarWin.webContents.executeJavaScript(`
+        (() => {
+          const outer = document.getElementById('outer');
+          if (!outer) return [920, 80];
+          const r = outer.getBoundingClientRect();
+          return [Math.ceil(r.width) || 920, Math.ceil(r.height) || 80];
+        })()
+      `).then(([w, h]) => {
+        if (toolbarWin && !toolbarWin.isDestroyed()) {
+          toolbarWin.setSize(w + 2, h + 2);
+          // Re-centre horizontally after resize
+          const b = toolbarWin.getBounds();
+          const { width: sw } = screen.getPrimaryDisplay().workAreaSize;
+          toolbarWin.setPosition(Math.round((sw - b.width) / 2), b.y);
+        }
+      }).catch(() => {});
+    }, 300);
+  });
+
+  toolbarWin.on('closed', () => { toolbarWin = null; });
+}
+
+// ── Main window ───────────────────────────────────────────────────────────────
+app.whenReady().then(() => {
+  Menu.setApplicationMenu(null);
   createSplash();
 
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
@@ -218,13 +273,13 @@ app.whenReady().then(() => {
     backgroundColor: '#1a1d21'
   });
 
-  // ── App version ───────────────────────────────────────────────────────────
+  // ── App version ──────────────────────────────────────────────────────────
   ipcMain.handle('get-version', () => app.getVersion());
 
-  // ── Manual update check from renderer ──────────────────────────────────────
+  // ── Manual update check ──────────────────────────────────────────────────
   ipcMain.on('check-for-updates', () => checkForUpdates(false));
 
-  // ── Screen share: provide sources to renderer ──────────────────────────────
+  // ── Screen share sources ─────────────────────────────────────────────────
   ipcMain.handle('get-screen-sources', async () => {
     const sources = await desktopCapturer.getSources({
       types: ['window', 'screen'],
@@ -239,24 +294,19 @@ app.whenReady().then(() => {
     }));
   });
 
-  // ── Chat Pop-out Window ────────────────────────────────────────────────────
+  // ── Chat Pop-out Window ──────────────────────────────────────────────────
   ipcMain.on('open-chat-window', (event, token) => {
-    if (chatWin && !chatWin.isDestroyed()) {
-      chatWin.focus();
-      return;
-    }
+    if (chatWin && !chatWin.isDestroyed()) { chatWin.focus(); return; }
 
     const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize;
     const chatWidth  = Math.min(960, Math.floor(sw * 0.45));
     const chatHeight = Math.min(720, Math.floor(sh * 0.85));
 
-    // Position to the right of main window, or centre of screen
     let chatX, chatY;
     if (mainWin && !mainWin.isDestroyed()) {
       const mb = mainWin.getBounds();
       chatX = mb.x + mb.width + 10;
       chatY = mb.y;
-      // If it would go off-screen, place it overlapping instead
       if (chatX + chatWidth > sw) chatX = Math.max(0, mb.x - chatWidth - 10);
     }
 
@@ -279,30 +329,91 @@ app.whenReady().then(() => {
       show: false
     });
 
-    const chatUrl = `${SERVER_URL}/chat/index.html?token=${encodeURIComponent(token)}`;
-    chatWin.loadURL(chatUrl);
-
+    chatWin.loadURL(`${SERVER_URL}/chat/index.html?token=${encodeURIComponent(token)}`);
     chatWin.webContents.session.setPermissionRequestHandler((wc, permission, callback) => {
       callback(true);
     });
-
-    chatWin.webContents.on('did-finish-load', () => {
-      chatWin.show();
-    });
-
+    chatWin.webContents.on('did-finish-load', () => chatWin.show());
     chatWin.on('closed', () => { chatWin = null; });
   });
 
-  // ── Notify main window of new chat message (badge / sound) ────────────────
+  // ── Chat notification (main ↔ chat window) ───────────────────────────────
   ipcMain.on('chat-notify', (event, data) => {
     if (mainWin && !mainWin.isDestroyed()) {
       mainWin.webContents.send('chat-notification', data);
     }
   });
 
-  // ── Remote Control: inject mouse/keyboard events into the active display ──
+  // ── Floating Toolbar: show/hide ──────────────────────────────────────────
+  ipcMain.on('toolbar-show', () => {
+    if (!toolbarWin || toolbarWin.isDestroyed()) createToolbarWin();
+    // Show after a brief delay to let it load
+    const showIt = () => {
+      if (toolbarWin && !toolbarWin.isDestroyed() && !toolbarWin.isVisible()) {
+        toolbarWin.show();
+      }
+    };
+    if (toolbarWin.webContents.isLoading()) {
+      toolbarWin.webContents.once('did-finish-load', () => setTimeout(showIt, 400));
+    } else {
+      setTimeout(showIt, 100);
+    }
+  });
+
+  ipcMain.on('toolbar-hide', () => {
+    if (toolbarWin && !toolbarWin.isDestroyed()) toolbarWin.hide();
+  });
+
+  // ── Floating Toolbar: relay button clicks back to mainWin ────────────────
+  // toolbar.html sends toolbar-action → main.js forwards to mainWin renderer
+  ipcMain.on('toolbar-action', (event, action) => {
+    if (mainWin && !mainWin.isDestroyed()) {
+      mainWin.webContents.send('toolbar-action', action);
+    }
+  });
+
+  // ── Floating Toolbar: receive state updates from mainWin ─────────────────
+  // mainWin sends toolbar-state → main.js forwards to toolbarWin
+  // Special key _resetPosition: re-centre the toolbar window on screen
+  ipcMain.on('toolbar-state', (event, state) => {
+    if (!toolbarWin || toolbarWin.isDestroyed()) return;
+
+    if (state._resetPosition) {
+      // Re-centre toolbar on the primary display
+      const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize;
+      const b = toolbarWin.getBounds();
+      toolbarWin.setPosition(
+        Math.round((sw - b.width) / 2),
+        sh - b.height - 12
+      );
+      return;
+    }
+
+    toolbarWin.webContents.send('toolbar-state', state);
+  });
+
+  // ── Floating Toolbar: move to absolute screen position ───────────────────
+  // toolbar.html can request a position change (used during drag)
+  ipcMain.on('toolbar-move', (event, { x, y }) => {
+    if (!toolbarWin || toolbarWin.isDestroyed()) return;
+    const allScreens = screen.getAllDisplays();
+    // Allow positioning anywhere across all monitors
+    toolbarWin.setPosition(Math.round(x), Math.round(y));
+  });
+
+  // ── Floating Toolbar: get current screen position ────────────────────────
+  ipcMain.handle('toolbar-get-bounds', () => {
+    if (!toolbarWin || toolbarWin.isDestroyed()) return null;
+    return toolbarWin.getBounds();
+  });
+
+  // ── Cursor screen point (for drag calculations) ──────────────────────────
+  ipcMain.handle('get-cursor-screen-point', () => {
+    return screen.getCursorScreenPoint();
+  });
+
+  // ── Remote Control: inject mouse/keyboard events ─────────────────────────
   ipcMain.on('inject-input', (event, data) => {
-    // Only inject into the main window (which shows the shared screen)
     const targetWin = mainWin;
     if (!targetWin || targetWin.isDestroyed()) return;
 
@@ -310,7 +421,6 @@ app.whenReady().then(() => {
     const bounds = targetWin.getBounds();
 
     if (['mousemove', 'mousedown', 'mouseup', 'click', 'dblclick'].includes(data.type)) {
-      // Convert normalised (0-1) coords to window pixels
       const x = Math.round((data.x || 0) * bounds.width);
       const y = Math.round((data.y || 0) * bounds.height);
 
@@ -333,7 +443,6 @@ app.whenReady().then(() => {
       wc.sendInputEvent({ type: 'mouseWheel', x, y, deltaX: data.deltaX || 0, deltaY: -(data.deltaY || 0) });
     } else if (data.type === 'keydown' || data.type === 'keyup') {
       const keyCode = data.key || '';
-      // Map common keys
       const keyMap = {
         'Enter': 'Return', 'Backspace': 'Backspace', 'Tab': 'Tab',
         'Escape': 'Escape', 'ArrowUp': 'Up', 'ArrowDown': 'Down',
@@ -342,7 +451,6 @@ app.whenReady().then(() => {
         'PageUp': 'PageUp', 'PageDown': 'PageDown'
       };
       const electronKey = keyMap[keyCode] || keyCode;
-
       const modifiers = [];
       if (data.shiftKey) modifiers.push('shift');
       if (data.ctrlKey) modifiers.push('control');
@@ -350,7 +458,6 @@ app.whenReady().then(() => {
       if (data.metaKey) modifiers.push('meta');
 
       if (data.type === 'keydown') {
-        // For single characters, use char event for proper typing
         if (keyCode.length === 1) {
           wc.sendInputEvent({ type: 'keyDown', keyCode: electronKey, modifiers });
           wc.sendInputEvent({ type: 'char', keyCode: electronKey, modifiers });
@@ -363,7 +470,7 @@ app.whenReady().then(() => {
     }
   });
 
-  // ── Allow media permissions (camera, mic, screen) ─────────────────────────
+  // ── Media permissions ────────────────────────────────────────────────────
   session.defaultSession.setPermissionRequestHandler((wc, permission, callback) => {
     const allowed = ['media', 'mediaKeySystem', 'geolocation', 'notifications', 'fullscreen', 'display-capture'];
     callback(allowed.includes(permission));
@@ -371,7 +478,7 @@ app.whenReady().then(() => {
 
   session.defaultSession.setPermissionCheckHandler(() => true);
 
-  // ── Override getDisplayMedia for screen sharing in Electron ───────────────
+  // ── Override getDisplayMedia for screen sharing ──────────────────────────
   mainWin.webContents.session.setDisplayMediaRequestHandler((request, callback) => {
     desktopCapturer.getSources({ types: ['screen', 'window'] }).then(sources => {
       const entireScreen = sources.find(s =>
@@ -381,7 +488,7 @@ app.whenReady().then(() => {
     });
   });
 
-  // ── Load app ───────────────────────────────────────────────────────────────
+  // ── Load app ─────────────────────────────────────────────────────────────
   mainWin.loadURL(SERVER_URL);
 
   mainWin.webContents.on('did-finish-load', () => {
@@ -389,8 +496,7 @@ app.whenReady().then(() => {
       if (splash && !splash.isDestroyed()) { splash.close(); splash = null; }
       mainWin.show();
       if (IS_DEV) mainWin.webContents.openDevTools();
-
-      // Check for launcher updates silently on startup (after 5s)
+      // Check for launcher updates silently (after 5s)
       setTimeout(() => checkForUpdates(true), 5000);
     }, 600);
   });
@@ -401,15 +507,16 @@ app.whenReady().then(() => {
     mainWin.loadURL(getErrorPage(errorDesc));
   });
 
-  // ── Window lifecycle ───────────────────────────────────────────────────────
+  // ── Window lifecycle ─────────────────────────────────────────────────────
   mainWin.on('closed', () => {
     if (chatWin && !chatWin.isDestroyed()) { chatWin.close(); chatWin = null; }
+    if (toolbarWin && !toolbarWin.isDestroyed()) { toolbarWin.close(); toolbarWin = null; }
     if (tray) { tray.destroy(); tray = null; }
     mainWin = null;
     app.quit();
   });
 
-  // ── Dev tools shortcut (F12 / Ctrl+Shift+I) ───────────────────────────────
+  // ── Dev tools shortcut (F12 / Ctrl+Shift+I) ─────────────────────────────
   mainWin.webContents.on('before-input-event', (event, input) => {
     if (input.key === 'F12' || (input.control && input.shift && input.key === 'I')) {
       mainWin.webContents.toggleDevTools();
@@ -419,18 +526,16 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => app.quit());
 
-// ── Security: block navigation to unknown origins ─────────────────────────────
+// ── Security: block navigation to unknown origins ────────────────────────────
 app.on('web-contents-created', (event, contents) => {
   contents.on('will-navigate', (navigationEvent, navigationUrl) => {
     const parsedUrl = new URL(navigationUrl);
     const serverHost = new URL(SERVER_URL).hostname;
-    // Allow navigation within the server domain only
     if (parsedUrl.hostname !== serverHost) {
       navigationEvent.preventDefault();
     }
   });
 
-  // Open external links in system browser
   contents.setWindowOpenHandler(({ url }) => {
     const parsedUrl = new URL(url);
     const serverHost = new URL(SERVER_URL).hostname;
