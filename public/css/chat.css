@@ -1,0 +1,808 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   VIRTUAL STUDIO CHAT — Slack-Authentic Dark Mode Design
+   Pixel-accurate recreation of Slack's desktop dark theme
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Slack Dark Mode Color Palette (exact values) ─── */
+  --slack-bg-primary: #1a1d21;
+  --slack-bg-sidebar: #19171d;
+  --slack-bg-hover: #27242c;
+  --slack-bg-active: #1164a3;
+  --slack-bg-surface: #222529;
+  --slack-bg-input: #222529;
+  --slack-bg-input-focus: #1a1d21;
+  --slack-bg-toolbar: #222529;
+  --slack-bg-compose: #222529;
+  --slack-bg-compose-border: #565856;
+  --slack-bg-hover-msg: #222529;
+  --slack-bg-modal: #1a1d21;
+  --slack-bg-overlay: rgba(0,0,0,0.6);
+  --slack-bg-badge: #cd2553;
+  --slack-bg-presence: #2bac76;
+  --slack-bg-button: #007a5a;
+  --slack-bg-button-hover: #148567;
+  --slack-bg-mention: rgba(29,155,209,0.1);
+  --slack-bg-code: #2d2d2d;
+  --slack-bg-blockquote: transparent;
+
+  --slack-text-primary: #d1d2d3;
+  --slack-text-secondary: #ababad;
+  --slack-text-muted: #8d8d8e;
+  --slack-text-faint: #616061;
+  --slack-text-sidebar: #cfc3cf;
+  --slack-text-sidebar-muted: #9b9a9c;
+  --slack-text-link: #1d9bd1;
+  --slack-text-link-hover: #62b0d9;
+  --slack-text-mention: #1d9bd1;
+  --slack-text-name: #d1d2d3;
+  --slack-text-time: #616061;
+  --slack-text-badge: #ffffff;
+  --slack-text-button: #ffffff;
+  --slack-text-placeholder: #616061;
+
+  --slack-border: #383838;
+  --slack-border-light: #2e2e2e;
+  --slack-border-input: #565856;
+  --slack-border-input-focus: #868686;
+  --slack-border-divider: #383838;
+
+  --slack-radius-sm: 4px;
+  --slack-radius-md: 6px;
+  --slack-radius-lg: 8px;
+  --slack-radius-xl: 12px;
+  --slack-radius-full: 999px;
+
+  --slack-shadow-modal: 0 18px 56px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.05);
+  --slack-shadow-popover: 0 4px 12px rgba(0,0,0,0.36);
+  --slack-shadow-toast: 0 4px 12px rgba(0,0,0,0.3);
+
+  --slack-font: 'Lato', 'Slack-Lato', 'appleLogo', sans-serif;
+  --slack-font-mono: 'Monaco', 'Menlo', 'Consolas', 'Courier New', monospace;
+
+  --slack-sidebar-width: 260px;
+  --slack-header-height: 49px;
+  --slack-compose-min-height: 41px;
+  --slack-transition: 80ms linear;
+}
+
+/* ─── Reset & Base ──────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  height: 100%; width: 100%;
+  font-family: var(--slack-font);
+  font-size: 15px; line-height: 1.46668;
+  background: var(--slack-bg-primary);
+  color: var(--slack-text-primary);
+  overflow: hidden; -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+a { color: var(--slack-text-link); text-decoration: none; }
+a:hover { color: var(--slack-text-link-hover); text-decoration: underline; }
+button { font-family: inherit; cursor: pointer; border: none; outline: none; background: none; }
+input, textarea, select {
+  font-family: inherit; font-size: 15px;
+  outline: none; color: var(--slack-text-primary);
+}
+
+/* Custom scrollbar — Slack style */
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(209,210,211,0.15); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(209,210,211,0.25); }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   APP LAYOUT — Three-column Slack structure
+   ═══════════════════════════════════════════════════════════════════════ */
+.chat-app {
+  display: flex; height: 100vh; width: 100vw; overflow: hidden;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SIDEBAR — Left channel/DM navigation (Slack's purple-dark sidebar)
+   ═══════════════════════════════════════════════════════════════════════ */
+.chat-sidebar {
+  width: var(--slack-sidebar-width); min-width: var(--slack-sidebar-width);
+  background: var(--slack-bg-sidebar);
+  display: flex; flex-direction: column; overflow: hidden;
+  border-right: 1px solid rgba(255,255,255,0.04);
+}
+
+/* Sidebar: Workspace Header */
+.chat-sidebar-header {
+  padding: 12px 16px 8px;
+  display: flex; align-items: center; justify-content: space-between;
+  min-height: var(--slack-header-height);
+}
+.chat-sidebar-header h2 {
+  font-size: 18px; font-weight: 900; color: #fff;
+  letter-spacing: -0.2px; line-height: 1.3;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chat-workspace-name {
+  font-size: 13px; color: var(--slack-text-sidebar-muted);
+  margin-top: 1px;
+}
+.sidebar-compose-btn {
+  width: 36px; height: 36px; border-radius: 50%;
+  background: rgba(255,255,255,0.12);
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 20px; font-weight: 300;
+  transition: background var(--slack-transition);
+  flex-shrink: 0;
+}
+.sidebar-compose-btn:hover { background: rgba(255,255,255,0.22); }
+
+/* Sidebar: Search */
+.chat-search-wrap { padding: 0 12px 10px; }
+.chat-search-wrap { position: relative; }
+.chat-search-input {
+  width: 100%; padding: 5px 8px 5px 30px; font-size: 13px;
+  background: rgba(255,255,255,0.08); border: none;
+  border-radius: var(--slack-radius-md); color: var(--slack-text-sidebar);
+  transition: background var(--slack-transition);
+  height: 28px;
+}
+.chat-search-input::placeholder { color: var(--slack-text-sidebar-muted); font-size: 13px; }
+.chat-search-input:focus { background: rgba(255,255,255,0.14); }
+.chat-search-wrap .search-icon {
+  position: absolute; left: 20px; top: 50%; transform: translateY(-50%);
+  font-size: 13px; color: var(--slack-text-sidebar-muted); pointer-events: none;
+}
+
+/* Sidebar: Section Labels */
+.chat-section-label {
+  padding: 10px 16px 4px; font-size: 15px; font-weight: 700;
+  color: var(--slack-text-sidebar); display: flex;
+  align-items: center; justify-content: space-between;
+  cursor: default; user-select: none;
+}
+.chat-section-label .section-toggle {
+  width: 24px; height: 24px; border-radius: var(--slack-radius-sm);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; color: var(--slack-text-sidebar-muted);
+  cursor: pointer; background: none; border: none;
+  transition: background var(--slack-transition);
+}
+.chat-section-label .section-toggle:hover { background: rgba(255,255,255,0.1); color: #fff; }
+
+/* Sidebar: Channel & DM List */
+.chat-channel-list {
+  flex: 1; overflow-y: auto; padding: 0 8px;
+  scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.1) transparent;
+}
+
+.chat-channel-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 8px; margin: 1px 0;
+  border-radius: var(--slack-radius-md);
+  cursor: pointer; transition: background var(--slack-transition);
+  font-size: 15px; color: var(--slack-text-sidebar-muted);
+  height: 28px; line-height: 28px;
+}
+.chat-channel-item:hover { background: var(--slack-bg-hover); color: var(--slack-text-sidebar); }
+.chat-channel-item.active {
+  background: var(--slack-bg-active); color: #fff; font-weight: 400;
+}
+.chat-channel-item .channel-icon {
+  font-size: 15px; width: 18px; text-align: center; flex-shrink: 0;
+  opacity: 0.7; font-style: normal;
+}
+.chat-channel-item.active .channel-icon { opacity: 1; }
+.chat-channel-item .channel-name {
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 15px;
+}
+
+/* Unread styling — bold white like Slack */
+.chat-channel-item.unread { color: var(--slack-text-sidebar); font-weight: 700; }
+.chat-channel-item.unread .channel-icon { opacity: 1; }
+
+/* Unread Badge (red pill) */
+.chat-unread-badge {
+  min-width: 18px; height: 18px; border-radius: var(--slack-radius-full);
+  background: var(--slack-bg-badge); color: var(--slack-text-badge);
+  font-size: 12px; font-weight: 700; display: flex;
+  align-items: center; justify-content: center; padding: 0 5px;
+  flex-shrink: 0;
+}
+
+/* DM: User Avatar */
+.chat-dm-avatar {
+  width: 20px; height: 20px; border-radius: var(--slack-radius-sm);
+  background: #4a154b; display: flex;
+  align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 800; color: #fff;
+  flex-shrink: 0; text-transform: uppercase;
+  position: relative;
+}
+.chat-dm-avatar.online::after {
+  content: ''; position: absolute; bottom: -1px; right: -1px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--slack-bg-presence);
+  border: 2px solid var(--slack-bg-sidebar);
+}
+
+/* Sidebar: Footer / Current User */
+.chat-sidebar-footer {
+  padding: 8px 12px; display: flex; align-items: center; gap: 8px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  min-height: 48px;
+}
+.chat-user-avatar {
+  width: 26px; height: 26px; border-radius: var(--slack-radius-sm);
+  background: #4a154b; display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 800; color: #fff; flex-shrink: 0;
+  position: relative;
+}
+.chat-user-info { flex: 1; min-width: 0; }
+.chat-user-name {
+  font-size: 15px; font-weight: 700; color: #fff;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chat-user-status-text {
+  font-size: 13px; color: var(--slack-text-sidebar-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chat-status-dot {
+  width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+  border: 2px solid var(--slack-bg-sidebar);
+  position: absolute; bottom: -1px; right: -1px;
+}
+.chat-status-dot.online { background: var(--slack-bg-presence); }
+.chat-status-dot.away { background: transparent; border: 2px solid var(--slack-text-muted); }
+.chat-status-dot.dnd { background: transparent; border: 2px solid var(--slack-text-muted); }
+.chat-status-dot.offline { background: transparent; border: 2px solid var(--slack-text-muted); }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MAIN CONTENT — Channel view with header, messages, compose
+   ═══════════════════════════════════════════════════════════════════════ */
+.chat-main {
+  flex: 1; display: flex; flex-direction: column;
+  background: var(--slack-bg-primary); overflow: hidden;
+  min-width: 0; /* flex shrink fix */
+}
+
+/* ─── Channel Header ────────────────────────────────────────────────── */
+.chat-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 20px; height: var(--slack-header-height);
+  min-height: var(--slack-header-height);
+  border-bottom: 1px solid var(--slack-border);
+  background: var(--slack-bg-primary);
+  flex-shrink: 0;
+}
+.chat-header-left { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.chat-header-icon {
+  font-size: 15px; color: var(--slack-text-muted);
+  font-style: normal; flex-shrink: 0;
+}
+.chat-header-name {
+  font-size: 18px; font-weight: 900; color: var(--slack-text-primary);
+  letter-spacing: -0.2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chat-header-members {
+  font-size: 13px; color: var(--slack-text-muted); margin-left: 8px; flex-shrink: 0;
+}
+.chat-header-topic {
+  font-size: 13px; color: var(--slack-text-muted);
+  margin-left: 8px; padding-left: 8px;
+  border-left: 1px solid var(--slack-border);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 300px;
+}
+.chat-header-right { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.chat-header-btn {
+  width: 28px; height: 28px; border-radius: var(--slack-radius-sm);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; color: var(--slack-text-muted);
+  transition: all var(--slack-transition);
+  background: none; border: none; cursor: pointer;
+}
+.chat-header-btn:hover { background: rgba(255,255,255,0.06); color: var(--slack-text-primary); }
+
+/* ─── Connection Status Bar ─────────────────────────────────────────── */
+.chat-connection-bar {
+  padding: 4px 16px; font-size: 13px; font-weight: 700;
+  text-align: center; display: none;
+}
+.chat-connection-bar.disconnected {
+  display: block; background: #5b1a00; color: #f8d7c8;
+}
+.chat-connection-bar.reconnecting {
+  display: block; background: #4a3800; color: #f8e6a0;
+}
+
+/* ─── Empty State ───────────────────────────────────────────────────── */
+.chat-empty-state {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  text-align: center; padding: 40px;
+}
+.chat-empty-icon { font-size: 64px; margin-bottom: 20px; }
+.chat-empty-title {
+  font-size: 22px; font-weight: 900; color: var(--slack-text-primary);
+  margin-bottom: 8px;
+}
+.chat-empty-desc {
+  font-size: 15px; color: var(--slack-text-muted);
+  max-width: 420px; line-height: 1.5;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MESSAGES AREA — The scrollable message list
+   ═══════════════════════════════════════════════════════════════════════ */
+.chat-messages {
+  flex: 1; overflow-y: auto; overflow-x: hidden;
+  padding: 8px 0; display: flex; flex-direction: column;
+}
+
+/* ─── Date Divider ──────────────────────────────────────────────────── */
+.chat-date-divider {
+  display: flex; align-items: center; margin: 16px 20px 8px;
+  user-select: none; position: relative;
+}
+.chat-date-divider::before {
+  content: ''; position: absolute; left: 0; right: 0; top: 50%;
+  height: 1px; background: var(--slack-border-divider);
+}
+.chat-date-divider span {
+  position: relative; z-index: 1;
+  font-size: 13px; font-weight: 700; color: var(--slack-text-primary);
+  background: var(--slack-bg-primary); padding: 0 16px;
+  margin: 0 auto; border: 1px solid var(--slack-border-divider);
+  border-radius: var(--slack-radius-full); line-height: 26px;
+  white-space: nowrap;
+}
+
+/* ─── Message Row ───────────────────────────────────────────────────── */
+.chat-message {
+  display: flex; gap: 8px; padding: 8px 20px;
+  transition: background 50ms ease;
+  position: relative;
+}
+.chat-message:hover { background: var(--slack-bg-hover-msg); }
+.chat-message:hover .chat-msg-actions { opacity: 1; pointer-events: auto; }
+
+/* Continuation: same user within 5 min — compact style */
+.chat-message.continuation { padding-top: 0; padding-bottom: 0; }
+.chat-message.continuation .chat-msg-avatar { visibility: hidden; height: 0; width: 36px; }
+.chat-message.continuation .chat-msg-name,
+.chat-message.continuation .chat-msg-role-badge,
+.chat-message.continuation .chat-msg-time-header { display: none; }
+.chat-message.continuation:hover .chat-msg-compact-time { display: block; }
+
+/* Avatar */
+.chat-msg-avatar {
+  width: 36px; height: 36px; border-radius: var(--slack-radius-lg);
+  flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 800; color: #fff;
+  cursor: pointer; margin-top: 2px;
+}
+/* Role-based avatar gradient colors */
+.chat-msg-avatar.role-owner { background: #e8912d; }
+.chat-msg-avatar.role-developer { background: #7c3aed; }
+.chat-msg-avatar.role-admin { background: #1264a3; }
+.chat-msg-avatar.role-instructor { background: #2bac76; }
+.chat-msg-avatar.role-student { background: #4a154b; }
+
+.chat-msg-body { flex: 1; min-width: 0; }
+
+/* Message Header: name + time */
+.chat-msg-header { display: flex; align-items: baseline; gap: 8px; }
+.chat-msg-name {
+  font-size: 15px; font-weight: 900; color: var(--slack-text-primary);
+  cursor: pointer;
+}
+.chat-msg-name:hover { text-decoration: underline; }
+.chat-msg-role-badge {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.5px; padding: 0px 4px; border-radius: 3px;
+  line-height: 16px; vertical-align: middle;
+}
+.chat-msg-role-badge.owner { background: rgba(232,145,45,0.2); color: #e8912d; }
+.chat-msg-role-badge.developer { background: rgba(124,58,237,0.2); color: #a78bfa; }
+.chat-msg-role-badge.admin { background: rgba(18,100,163,0.2); color: #1d9bd1; }
+.chat-msg-role-badge.instructor { background: rgba(43,172,118,0.2); color: #2bac76; }
+
+.chat-msg-time-header {
+  font-size: 12px; color: var(--slack-text-time); font-weight: 400;
+}
+.chat-msg-compact-time {
+  display: none; position: absolute; left: 4px; top: 2px;
+  font-size: 11px; color: var(--slack-text-time); width: 52px;
+  text-align: right; font-variant-numeric: tabular-nums;
+}
+
+/* Message Content */
+.chat-msg-content {
+  font-size: 15px; line-height: 1.46668; color: var(--slack-text-primary);
+  word-wrap: break-word; overflow-wrap: break-word; white-space: pre-wrap;
+}
+.chat-msg-content a { color: var(--slack-text-link); }
+.chat-msg-content a:hover { color: var(--slack-text-link-hover); text-decoration: underline; }
+.chat-msg-content code {
+  background: var(--slack-bg-code); padding: 2px 4px;
+  border-radius: 3px; font-size: 12px;
+  font-family: var(--slack-font-mono);
+  color: #e06c75; border: 1px solid var(--slack-border);
+}
+.chat-msg-content pre {
+  background: var(--slack-bg-code); padding: 8px 12px;
+  border-radius: var(--slack-radius-sm); overflow-x: auto;
+  margin: 4px 0; font-size: 12px; line-height: 1.5;
+  font-family: var(--slack-font-mono);
+  border: 1px solid var(--slack-border);
+  color: var(--slack-text-primary);
+}
+.chat-msg-content pre code {
+  background: none; padding: 0; border: none; color: inherit; font-size: inherit;
+}
+.chat-msg-content .mention {
+  background: var(--slack-bg-mention); color: var(--slack-text-mention);
+  padding: 1px 3px; border-radius: 3px; font-weight: 700;
+  cursor: pointer;
+}
+.chat-msg-content .mention:hover { background: rgba(29,155,209,0.2); text-decoration: underline; }
+.chat-msg-content blockquote {
+  border-left: 4px solid var(--slack-border); padding-left: 12px;
+  margin: 4px 0; color: var(--slack-text-secondary);
+}
+.chat-msg-edited {
+  font-size: 12px; color: var(--slack-text-time); font-weight: 400;
+}
+
+/* ─── Message Hover Actions (floating toolbar) ──────────────────────── */
+.chat-msg-actions {
+  position: absolute; top: -16px; right: 20px;
+  display: flex; gap: 0; opacity: 0; pointer-events: none;
+  transition: opacity 100ms ease;
+  background: var(--slack-bg-surface);
+  border: 1px solid var(--slack-border);
+  border-radius: var(--slack-radius-lg);
+  box-shadow: var(--slack-shadow-popover);
+  overflow: hidden;
+}
+.chat-msg-action-btn {
+  width: 32px; height: 32px; display: flex;
+  align-items: center; justify-content: center;
+  font-size: 16px; color: var(--slack-text-muted);
+  cursor: pointer; border: none; background: none;
+  transition: all var(--slack-transition);
+}
+.chat-msg-action-btn:hover { background: rgba(255,255,255,0.06); color: var(--slack-text-primary); }
+
+/* ─── Reactions ─────────────────────────────────────────────────────── */
+.chat-msg-reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.chat-reaction {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; height: 24px;
+  border-radius: var(--slack-radius-full);
+  font-size: 12px; background: var(--slack-bg-surface);
+  border: 1px solid var(--slack-border);
+  cursor: pointer; transition: all var(--slack-transition);
+}
+.chat-reaction:hover { border-color: var(--slack-text-link); }
+.chat-reaction.reacted {
+  background: var(--slack-bg-mention);
+  border-color: var(--slack-text-link);
+}
+.chat-reaction .reaction-emoji { font-size: 16px; line-height: 1; }
+.chat-reaction .reaction-count { font-size: 12px; font-weight: 700; color: var(--slack-text-link); }
+
+/* Thread link */
+.chat-msg-thread-link {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 13px; color: var(--slack-text-link); font-weight: 700;
+  cursor: pointer; margin-top: 4px; padding: 2px 0;
+}
+.chat-msg-thread-link:hover { text-decoration: underline; }
+
+/* System Messages */
+.chat-system-message {
+  text-align: center; padding: 4px 20px; font-size: 13px;
+  color: var(--slack-text-muted);
+}
+
+/* Typing Indicator */
+.chat-typing-indicator {
+  padding: 0 20px; font-size: 13px; min-height: 20px;
+  color: var(--slack-text-muted); display: flex;
+  align-items: center; gap: 6px;
+}
+.typing-dots { display: inline-flex; gap: 2px; align-items: center; }
+.typing-dots span {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--slack-text-muted);
+  animation: typingBounce 1.4s infinite;
+}
+.typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes typingBounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.3; }
+  30% { transform: translateY(-3px); opacity: 1; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   COMPOSE / MESSAGE INPUT — Slack's rich compose box
+   ═══════════════════════════════════════════════════════════════════════ */
+.chat-input-area {
+  padding: 0 20px 20px; flex-shrink: 0;
+}
+.chat-input-container {
+  background: var(--slack-bg-compose);
+  border: 1px solid var(--slack-bg-compose-border);
+  border-radius: var(--slack-radius-lg);
+  transition: border-color 150ms ease;
+  overflow: hidden;
+}
+.chat-input-container:focus-within {
+  border-color: var(--slack-border-input-focus);
+}
+
+/* Compose: Formatting Toolbar */
+.chat-input-toolbar {
+  display: flex; align-items: center; gap: 0;
+  padding: 4px 8px; border-bottom: 1px solid var(--slack-border-light);
+}
+.chat-input-toolbar-btn {
+  width: 28px; height: 28px; border-radius: var(--slack-radius-sm);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; color: var(--slack-text-muted);
+  cursor: pointer; border: none; background: none;
+  transition: all var(--slack-transition);
+}
+.chat-input-toolbar-btn:hover {
+  background: rgba(255,255,255,0.06);
+  color: var(--slack-text-primary);
+}
+
+/* Compose: Text Area */
+.chat-input-field {
+  width: 100%; padding: 8px 12px; font-size: 15px; line-height: 1.46668;
+  background: transparent; border: none; outline: none; resize: none;
+  color: var(--slack-text-primary); min-height: var(--slack-compose-min-height);
+  max-height: 200px; font-family: var(--slack-font);
+}
+.chat-input-field::placeholder { color: var(--slack-text-placeholder); }
+
+/* Compose: Footer (hint + send) */
+.chat-input-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 4px 4px 12px;
+}
+.chat-input-hint { font-size: 12px; color: var(--slack-text-faint); }
+.chat-input-hint kbd {
+  background: var(--slack-bg-surface); padding: 1px 5px;
+  border-radius: 3px; font-size: 11px; border: 1px solid var(--slack-border);
+  font-family: inherit;
+}
+.chat-send-btn {
+  width: 32px; height: 32px; border-radius: var(--slack-radius-sm);
+  background: var(--slack-bg-button); color: var(--slack-text-button);
+  font-size: 16px; border: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background var(--slack-transition);
+}
+.chat-send-btn:hover { background: var(--slack-bg-button-hover); }
+.chat-send-btn:disabled { opacity: 0.35; cursor: default; }
+
+/* Compose: File upload preview */
+.chat-file-preview {
+  padding: 6px 12px; display: none; align-items: center; gap: 8px;
+  background: rgba(255,255,255,0.03);
+  border-bottom: 1px solid var(--slack-border-light);
+  font-size: 13px; color: var(--slack-text-secondary);
+}
+.chat-file-preview.show { display: flex; }
+.chat-file-preview-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-file-preview-remove {
+  cursor: pointer; color: var(--slack-text-muted); font-size: 14px;
+  padding: 2px 4px; border-radius: 3px;
+}
+.chat-file-preview-remove:hover { background: rgba(255,255,255,0.06); color: var(--slack-text-primary); }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   THREAD PANEL — Right side panel for threaded replies
+   ═══════════════════════════════════════════════════════════════════════ */
+.chat-thread-panel {
+  width: 400px; min-width: 400px;
+  background: var(--slack-bg-primary);
+  border-left: 1px solid var(--slack-border);
+  display: none; flex-direction: column; overflow: hidden;
+}
+.chat-thread-panel.open { display: flex; }
+
+.chat-thread-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px; height: var(--slack-header-height);
+  border-bottom: 1px solid var(--slack-border);
+  flex-shrink: 0;
+}
+.chat-thread-header h3 { font-size: 18px; font-weight: 900; color: var(--slack-text-primary); }
+.chat-thread-close {
+  width: 28px; height: 28px; border-radius: var(--slack-radius-sm);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; color: var(--slack-text-muted);
+  cursor: pointer; border: none; background: none;
+}
+.chat-thread-close:hover { background: rgba(255,255,255,0.06); }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MODALS — Create channel, New DM, etc.
+   ═══════════════════════════════════════════════════════════════════════ */
+.chat-modal-overlay {
+  position: fixed; inset: 0; background: var(--slack-bg-overlay);
+  display: none; align-items: center; justify-content: center;
+  z-index: 1000;
+}
+.chat-modal-overlay.open { display: flex; }
+
+.chat-modal {
+  background: var(--slack-bg-modal);
+  border: 1px solid var(--slack-border);
+  border-radius: var(--slack-radius-xl);
+  width: 520px; max-width: 90vw; max-height: 85vh;
+  box-shadow: var(--slack-shadow-modal);
+  overflow: hidden; display: flex; flex-direction: column;
+}
+.chat-modal-header {
+  padding: 20px 28px 0; display: flex; align-items: center;
+  justify-content: space-between;
+}
+.chat-modal-header h3 {
+  font-size: 22px; font-weight: 900; color: var(--slack-text-primary);
+}
+.chat-modal-close {
+  width: 36px; height: 36px; border-radius: var(--slack-radius-sm);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; color: var(--slack-text-muted);
+  cursor: pointer; border: none; background: none;
+}
+.chat-modal-close:hover { background: rgba(255,255,255,0.06); }
+
+.chat-modal-body { padding: 20px 28px; overflow-y: auto; flex: 1; }
+.chat-modal-footer {
+  padding: 16px 28px; display: flex; justify-content: flex-end; gap: 8px;
+  border-top: 1px solid var(--slack-border);
+}
+
+/* Form Elements */
+.chat-form-group { margin-bottom: 20px; }
+.chat-form-label {
+  display: block; font-size: 15px; font-weight: 700;
+  color: var(--slack-text-primary); margin-bottom: 8px;
+}
+.chat-form-input, .chat-form-textarea, .chat-form-select {
+  width: 100%; padding: 8px 12px; font-size: 15px;
+  background: var(--slack-bg-input);
+  border: 1px solid var(--slack-border-input);
+  border-radius: var(--slack-radius-sm);
+  color: var(--slack-text-primary); outline: none;
+  transition: border-color 150ms ease;
+}
+.chat-form-input:focus, .chat-form-textarea:focus {
+  border-color: var(--slack-border-input-focus);
+  box-shadow: 0 0 0 1px var(--slack-border-input-focus),
+              0 0 0 5px rgba(29,155,209,0.15);
+}
+.chat-form-textarea {
+  min-height: 80px; resize: vertical; font-family: var(--slack-font);
+  line-height: 1.46668;
+}
+.chat-form-input::placeholder, .chat-form-textarea::placeholder {
+  color: var(--slack-text-placeholder);
+}
+
+/* Buttons */
+.chat-btn {
+  padding: 8px 16px; border-radius: var(--slack-radius-sm);
+  font-size: 15px; font-weight: 700; cursor: pointer;
+  border: none; transition: all var(--slack-transition);
+  line-height: 1.2;
+}
+.chat-btn-primary { background: var(--slack-bg-button); color: #fff; }
+.chat-btn-primary:hover { background: var(--slack-bg-button-hover); }
+.chat-btn-secondary {
+  background: transparent; color: var(--slack-text-primary);
+  border: 1px solid var(--slack-border);
+}
+.chat-btn-secondary:hover { background: rgba(255,255,255,0.04); }
+.chat-btn-danger { background: #e01e5a; color: #fff; }
+.chat-btn-danger:hover { background: #c71b50; }
+
+/* DM User List Items in Modal */
+.chat-modal .chat-channel-item {
+  padding: 6px 8px; margin: 2px 0; height: auto;
+  border-radius: var(--slack-radius-md);
+}
+.chat-modal .chat-channel-item:hover { background: rgba(255,255,255,0.05); }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MEMBER REQUEST TOAST — Host approval notification
+   ═══════════════════════════════════════════════════════════════════════ */
+.chat-request-toast {
+  position: fixed; bottom: 24px; right: 24px;
+  background: var(--slack-bg-surface);
+  border: 1px solid var(--slack-border);
+  border-radius: var(--slack-radius-xl);
+  padding: 16px 20px; max-width: 380px; min-width: 300px;
+  box-shadow: var(--slack-shadow-toast);
+  z-index: 2000; display: none;
+  animation: toastSlideUp 300ms ease;
+}
+.chat-request-toast.show { display: block; }
+@keyframes toastSlideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.chat-request-toast-title {
+  font-size: 15px; font-weight: 900; margin-bottom: 4px;
+  color: var(--slack-text-primary);
+}
+.chat-request-toast-body {
+  font-size: 13px; color: var(--slack-text-secondary); margin-bottom: 12px;
+  line-height: 1.4;
+}
+.chat-request-toast-actions { display: flex; gap: 8px; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   EMOJI PICKER — Quick emoji selection grid
+   ═══════════════════════════════════════════════════════════════════════ */
+.chat-emoji-picker {
+  position: absolute; bottom: 100%; right: 0; margin-bottom: 4px;
+  background: var(--slack-bg-surface);
+  border: 1px solid var(--slack-border);
+  border-radius: var(--slack-radius-lg);
+  box-shadow: var(--slack-shadow-popover);
+  padding: 12px; width: 304px; max-height: 280px;
+  overflow-y: auto; display: none; z-index: 500;
+}
+.chat-emoji-picker.open { display: block; }
+.chat-emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; }
+.chat-emoji-btn {
+  width: 34px; height: 34px; font-size: 20px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--slack-radius-sm);
+  cursor: pointer; border: none; background: none;
+  transition: background var(--slack-transition);
+}
+.chat-emoji-btn:hover { background: rgba(255,255,255,0.08); }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   RESPONSIVE — Narrow viewport handling
+   ═══════════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  .chat-sidebar {
+    position: fixed; z-index: 100; left: -100%;
+    height: 100vh; transition: left 200ms ease;
+    box-shadow: 4px 0 20px rgba(0,0,0,0.4);
+  }
+  .chat-sidebar.mobile-open { left: 0; }
+  .chat-thread-panel {
+    position: fixed; z-index: 100; right: -100%;
+    width: 100vw; min-width: 100vw;
+    height: 100vh; transition: right 200ms ease;
+  }
+  .chat-thread-panel.open { right: 0; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   TOAST NOTIFICATION — Inline toast messages
+   ═══════════════════════════════════════════════════════════════════════ */
+.chat-toast {
+  position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+  padding: 8px 20px; border-radius: var(--slack-radius-lg);
+  font-size: 14px; font-weight: 700; z-index: 3000;
+  pointer-events: none; animation: toastFade 3s ease forwards;
+  box-shadow: var(--slack-shadow-toast);
+}
+.chat-toast.error { background: #5b1a00; color: #f8d7c8; }
+.chat-toast.success { background: #14532d; color: #bbf7d0; }
+.chat-toast.info { background: var(--slack-bg-surface); color: var(--slack-text-primary); border: 1px solid var(--slack-border); }
+@keyframes toastFade {
+  0% { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+  10% { opacity: 1; transform: translateX(-50%) translateY(0); }
+  80% { opacity: 1; }
+  100% { opacity: 0; }
+}

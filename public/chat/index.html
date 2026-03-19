@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Virtual Studio — Chat</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/chat.css">
+<script src="https://sites.super.myninja.ai/_assets/ninja-daytona-script.js"></script>
+</head>
+<body>
+
+<div class="chat-app" id="chatApp">
+
+  <!-- ═══ Sidebar ═══════════════════════════════════════════════════ -->
+  <aside class="chat-sidebar" id="chatSidebar">
+
+    <!-- Workspace Header -->
+    <div class="chat-sidebar-header">
+      <div>
+        <h2>Virtual Studio</h2>
+        <div class="chat-workspace-name" id="workspaceName">
+          <span class="chat-status-dot online" style="display:inline-block;position:static;width:8px;height:8px;border:none;background:#2bac76;vertical-align:middle;margin-right:4px;"></span>
+          <span id="currentUserName" style="vertical-align:middle;">Loading...</span>
+        </div>
+      </div>
+      <button class="sidebar-compose-btn" id="btnNewChannel" title="New message">✎</button>
+    </div>
+
+    <!-- Search -->
+    <div class="chat-search-wrap">
+      <span class="search-icon">⌕</span>
+      <input type="text" class="chat-search-input" id="chatSearchInput" placeholder="Search Virtual Studio">
+    </div>
+
+    <!-- Channel / DM Lists -->
+    <div class="chat-channel-list" id="channelListContainer">
+
+      <!-- Channels -->
+      <div class="chat-section-label">
+        <span>Channels</span>
+        <button class="section-toggle" data-section="channels" title="Add channel">+</button>
+      </div>
+      <div id="channelList"></div>
+
+      <!-- Direct Messages -->
+      <div class="chat-section-label" style="margin-top:4px;">
+        <span>Direct messages</span>
+        <button class="section-toggle" data-section="dms" title="New message">+</button>
+      </div>
+      <div id="dmList"></div>
+
+    </div>
+
+    <!-- Current User -->
+    <div class="chat-sidebar-footer">
+      <div class="chat-user-avatar" id="currentUserAvatar">
+        <span class="chat-status-dot online" id="currentStatusDot"></span>
+      </div>
+      <div class="chat-user-info">
+        <div class="chat-user-name" id="sidebarUserName">User</div>
+        <div class="chat-user-status-text" id="currentUserStatus">Active</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ═══ Main Content ══════════════════════════════════════════════ -->
+  <main class="chat-main" id="chatMain">
+
+    <!-- Connection Bar -->
+    <div class="chat-connection-bar" id="connectionBar">Reconnecting to chat...</div>
+
+    <!-- Channel Header -->
+    <div class="chat-header" id="chatHeader" style="display:none;">
+      <div class="chat-header-left">
+        <span class="chat-header-icon" id="headerChannelIcon">#</span>
+        <span class="chat-header-name" id="headerChannelName">general</span>
+        <span class="chat-header-members" id="headerMemberCount"></span>
+        <span class="chat-header-topic" id="headerTopic"></span>
+      </div>
+      <div class="chat-header-right">
+        <button class="chat-header-btn" id="btnMembers" title="Members">👤</button>
+        <button class="chat-header-btn" id="btnPinned" title="Pinned">📌</button>
+        <button class="chat-header-btn" id="btnChannelSearch" title="Search">🔍</button>
+      </div>
+    </div>
+
+    <!-- Empty State -->
+    <div class="chat-empty-state" id="emptyState">
+      <div class="chat-empty-icon">✉</div>
+      <div class="chat-empty-title">Welcome to Virtual Studio Chat</div>
+      <div class="chat-empty-desc">
+        Pick a conversation from the sidebar or start a new one.
+        Your meeting conversations will appear here automatically.
+      </div>
+    </div>
+
+    <!-- Messages -->
+    <div class="chat-messages" id="messagesContainer" style="display:none;"></div>
+
+    <!-- Typing -->
+    <div class="chat-typing-indicator" id="typingIndicator"></div>
+
+    <!-- Compose -->
+    <div class="chat-input-area" id="chatInputArea" style="display:none;">
+      <div class="chat-file-preview" id="filePreview">
+        <span>📎</span>
+        <span class="chat-file-preview-name" id="filePreviewName"></span>
+        <span class="chat-file-preview-remove" id="filePreviewRemove">✕</span>
+      </div>
+
+      <div class="chat-input-container">
+        <div class="chat-input-toolbar">
+          <button class="chat-input-toolbar-btn" id="btnFormatBold" title="Bold"><b>B</b></button>
+          <button class="chat-input-toolbar-btn" id="btnFormatItalic" title="Italic"><i>I</i></button>
+          <button class="chat-input-toolbar-btn" id="btnFormatCode" title="Code" style="font-family:monospace;font-size:13px;"></></button>
+          <span style="width:1px;height:18px;background:var(--slack-border);margin:0 4px;"></span>
+          <button class="chat-input-toolbar-btn" id="btnAttachFile" title="Attach file">📎</button>
+          <button class="chat-input-toolbar-btn" id="btnEmoji" title="Emoji">☺</button>
+        </div>
+        <textarea class="chat-input-field" id="messageInput"
+          placeholder="Message #general"
+          rows="1"></textarea>
+        <div class="chat-input-footer">
+          <span class="chat-input-hint"><kbd>↵</kbd> to send &nbsp; <kbd>⇧ ↵</kbd> new line</span>
+          <button class="chat-send-btn" id="btnSend" disabled title="Send message">➤</button>
+        </div>
+      </div>
+
+      <div class="chat-emoji-picker" id="emojiPicker">
+        <div class="chat-emoji-grid" id="emojiGrid"></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ═══ Thread Panel ══════════════════════════════════════════════ -->
+  <aside class="chat-thread-panel" id="threadPanel">
+    <div class="chat-thread-header">
+      <h3>Thread</h3>
+      <button class="chat-thread-close" id="threadClose">✕</button>
+    </div>
+    <div class="chat-messages" id="threadMessages"></div>
+    <div class="chat-input-area" style="padding-bottom:12px;">
+      <div class="chat-input-container">
+        <textarea class="chat-input-field" id="threadInput"
+          placeholder="Reply…"
+          rows="1"></textarea>
+        <div class="chat-input-footer">
+          <span></span>
+          <button class="chat-send-btn" id="btnThreadSend" disabled title="Send reply">➤</button>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<!-- ═══ Create Channel Modal ════════════════════════════════════════ -->
+<div class="chat-modal-overlay" id="newChannelModal">
+  <div class="chat-modal">
+    <div class="chat-modal-header">
+      <h3>Create a channel</h3>
+      <button class="chat-modal-close" id="newChannelClose">✕</button>
+    </div>
+    <div class="chat-modal-body">
+      <div class="chat-form-group">
+        <label class="chat-form-label">Name</label>
+        <input type="text" class="chat-form-input" id="newChannelName" placeholder="e.g. plan-budget" maxlength="80">
+      </div>
+      <div class="chat-form-group">
+        <label class="chat-form-label">Description <span style="font-weight:400;color:var(--slack-text-muted);">(optional)</span></label>
+        <textarea class="chat-form-textarea" id="newChannelDesc" placeholder="What's this channel about?" maxlength="300"></textarea>
+      </div>
+      <div class="chat-form-group">
+        <label class="chat-form-label">Visibility</label>
+        <select class="chat-form-input chat-form-select" id="newChannelType">
+          <option value="public">Public — anyone in Virtual Studio can find and join</option>
+          <option value="private">Private — only specific people can be added</option>
+        </select>
+      </div>
+    </div>
+    <div class="chat-modal-footer">
+      <button class="chat-btn chat-btn-secondary" id="newChannelCancel">Cancel</button>
+      <button class="chat-btn chat-btn-primary" id="newChannelCreate">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ New DM Modal ════════════════════════════════════════════════ -->
+<div class="chat-modal-overlay" id="newDmModal">
+  <div class="chat-modal">
+    <div class="chat-modal-header">
+      <h3>Direct message</h3>
+      <button class="chat-modal-close" id="newDmClose">✕</button>
+    </div>
+    <div class="chat-modal-body">
+      <div class="chat-form-group">
+        <label class="chat-form-label">To:</label>
+        <input type="text" class="chat-form-input" id="dmUserSearch" placeholder="Search for people">
+      </div>
+      <div id="dmUserList" style="max-height:320px;overflow-y:auto;margin-top:4px;"></div>
+    </div>
+    <div class="chat-modal-footer">
+      <button class="chat-btn chat-btn-secondary" id="newDmCancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Member Request Toast ════════════════════════════════════════ -->
+<div class="chat-request-toast" id="memberRequestToast">
+  <div class="chat-request-toast-title" id="requestToastTitle"></div>
+  <div class="chat-request-toast-body" id="requestToastBody"></div>
+  <div class="chat-request-toast-actions">
+    <button class="chat-btn chat-btn-primary" id="requestApprove" style="font-size:13px;padding:4px 12px;">Approve</button>
+    <button class="chat-btn chat-btn-danger" id="requestDeny" style="font-size:13px;padding:4px 12px;">Deny</button>
+  </div>
+</div>
+
+<input type="file" id="fileInput" style="display:none;">
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/js/chat.js"></script>
+</body>
+</html>

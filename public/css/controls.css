@@ -1,0 +1,293 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Remote Control, Integrations & AI Summary Styles
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Remote Control Bar ── */
+.remote-control-bar {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10000;
+  animation: rcBarSlideIn 0.3s ease;
+}
+@keyframes rcBarSlideIn {
+  from { transform: translateX(-50%) translateY(-100%); }
+  to { transform: translateX(-50%) translateY(0); }
+}
+.rc-bar-inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: linear-gradient(135deg, #1a1a2e, #2a2a4e);
+  border: 1px solid var(--primary-color);
+  border-top: none;
+  border-radius: 0 0 16px 16px;
+  padding: 8px 20px;
+  box-shadow: 0 4px 20px rgba(45, 140, 255, 0.3);
+}
+.rc-bar-icon { font-size: 18px; }
+.rc-bar-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-color);
+}
+.rc-bar-inner .btn-sm {
+  padding: 4px 12px;
+  font-size: 12px;
+}
+
+/* ── Remote Cursor Overlay ── */
+.remote-cursor-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 9999;
+}
+.remote-cursor {
+  position: absolute;
+  transition: left 0.05s linear, top 0.05s linear;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));
+}
+.remote-cursor-label {
+  position: absolute;
+  left: 20px;
+  top: 14px;
+  background: var(--primary-color);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+/* ── Remote Control Request Pulse ── */
+#remote-control-modal .modal {
+  animation: rcPulse 0.5s ease;
+}
+@keyframes rcPulse {
+  0% { transform: scale(0.9); opacity: 0; }
+  50% { transform: scale(1.02); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* ── Screen Control Interaction Layer ── */
+.screen-control-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  cursor: none;
+  z-index: 50;
+}
+.screen-control-layer.active {
+  cursor: crosshair;
+  background: transparent;
+}
+
+/* ── Integrations ── */
+.integration-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  margin-bottom: 10px;
+  transition: border-color 0.2s;
+}
+.integration-card:hover {
+  border-color: var(--primary-color);
+}
+.integration-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+.integration-icon.slack { background: linear-gradient(135deg, #4a154b, #611f69); }
+.integration-icon.discord { background: linear-gradient(135deg, #5865f2, #7289da); }
+.integration-icon.webhook { background: linear-gradient(135deg, #2d8cff, #0ea5e9); }
+.integration-info { flex: 1; min-width: 0; }
+.integration-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-color);
+}
+.integration-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+.integration-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.integration-toggle {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  background: var(--border-color);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.integration-toggle.active { background: var(--accent-color); }
+.integration-toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+.integration-toggle.active::after { transform: translateX(16px); }
+
+.integration-empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-secondary);
+}
+.integration-empty .icon { font-size: 48px; margin-bottom: 12px; }
+
+/* ── AI Summary Styles ── */
+.ai-summary-container {
+  padding: 4px 0;
+}
+.ai-summary-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+.ai-summary-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: linear-gradient(135deg, #8b5cf6, #6366f1);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 20px;
+}
+.ai-summary-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-color);
+}
+.ai-summary-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+.ai-summary-section {
+  margin-bottom: 20px;
+}
+.ai-summary-section h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--primary-color);
+  margin: 0 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ai-summary-section p {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-color);
+  margin: 0;
+}
+.ai-summary-section ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.ai-summary-section ul li {
+  padding: 6px 0 6px 20px;
+  position: relative;
+  font-size: 13px;
+  color: var(--text-color);
+  line-height: 1.5;
+}
+.ai-summary-section ul li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary-color);
+}
+.ai-summary-section ul.action-items li::before {
+  border-radius: 2px;
+  background: transparent;
+  border: 2px solid var(--accent-color);
+}
+.ai-summary-section ul.decisions li::before {
+  background: var(--accent-color);
+}
+.ai-summary-attendees {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ai-summary-attendee {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  font-size: 12px;
+  color: var(--text-color);
+}
+.ai-summary-topics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ai-summary-topic {
+  padding: 4px 10px;
+  background: rgba(45, 140, 255, 0.1);
+  border: 1px solid rgba(45, 140, 255, 0.3);
+  border-radius: 20px;
+  font-size: 12px;
+  color: var(--primary-color);
+}
+
+/* ── Remote Control Click Pulse ── */
+@keyframes rcClickPulse {
+  0% { transform: scale(0.5); opacity: 1; }
+  100% { transform: scale(2); opacity: 0; }
+}
+
+/* ── Spinner Enhancement ── */
+.spinner-lg {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--border-color);
+  border-top-color: var(--primary-color);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}

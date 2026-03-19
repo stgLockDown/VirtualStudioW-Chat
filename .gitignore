@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+
+# Database
+data/
+*.db
+
+# Build output
+dist/
+
+# Recordings (user data)
+recordings/*.webm
+recordings/*.mp4
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Electron cache
+.electron/

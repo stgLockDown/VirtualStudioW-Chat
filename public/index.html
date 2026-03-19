@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Virtual Studio — Online Learning Platform</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <link rel="stylesheet" href="css/theme.css">
+  <link rel="stylesheet" href="css/controls.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎓</text></svg>">
+<script src="https://sites.super.myninja.ai/_assets/ninja-daytona-script.js"></script>
+</head>
+<body>
+<div id="app">
+
+<!-- ═══════════════ DASHBOARD ═══════════════ -->
+
+<!-- ═══════════════ LOGIN / REGISTER ═══════════════ -->
+<div id="auth-page" class="page auth-page active">
+  <div class="auth-container">
+    <div class="auth-card">
+      <div class="auth-logo">
+        <div class="auth-logo-icon">🎓</div>
+        <h1>Virtual Studio</h1>
+        <p class="auth-subtitle">Online Learning Platform</p>
+      </div>
+      <form id="login-form" class="auth-form">
+        <h2>Sign In</h2>
+        <div class="auth-field">
+          <label for="login-username">Username or Email</label>
+          <input type="text" id="login-username" placeholder="Enter username or email" required autocomplete="username">
+        </div>
+        <div class="auth-field">
+          <label for="login-password">Password</label>
+          <input type="password" id="login-password" placeholder="Enter password" required autocomplete="current-password">
+        </div>
+        <div id="login-error" class="auth-error" style="display:none"></div>
+        <button type="submit" class="auth-btn auth-btn-primary" id="login-btn"><span>Sign In</span></button>
+        <p class="auth-switch">Don't have an account? <a href="#" id="show-register">Create one</a></p>
+      </form>
+      <form id="register-form" class="auth-form" style="display:none">
+        <h2>Create Account</h2>
+        <div class="auth-field">
+          <label for="reg-name">Full Name</label>
+          <input type="text" id="reg-name" placeholder="Enter your full name" required>
+        </div>
+        <div class="auth-field">
+          <label for="reg-username">Username</label>
+          <input type="text" id="reg-username" placeholder="Choose a username" required autocomplete="username">
+        </div>
+        <div class="auth-field">
+          <label for="reg-email">Email (optional)</label>
+          <input type="email" id="reg-email" placeholder="Enter email address" autocomplete="email">
+        </div>
+        <div class="auth-field">
+          <label for="reg-password">Password</label>
+          <input type="password" id="reg-password" placeholder="Create a password (min 6 chars)" required minlength="6" autocomplete="new-password">
+        </div>
+        <div class="auth-field-hint" style="font-size:12px;color:#9aa0a6;margin:-4px 0 8px;">
+          Use a <strong>@game-u.com</strong> email to register as an Instructor automatically.
+        </div>
+        <div id="register-error" class="auth-error" style="display:none"></div>
+        <button type="submit" class="auth-btn auth-btn-primary" id="register-btn"><span>Create Account</span></button>
+        <p class="auth-switch">Already have an account? <a href="#" id="show-login">Sign in</a></p>
+      </form>
+    </div>
+    <div class="auth-footer">
+      <p>Default owner: <strong>admin</strong> / <strong>admin123</strong></p>
+    </div>
+  </div>
+</div>
+
+<div id="dashboard-page" class="page dashboard-page">
+  <div class="sidebar">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-icon">🎓</div>
+      <h2>Virtual Studio</h2>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="sidebar-section">
+        <div class="sidebar-section-title">Main</div>
+        <div class="sidebar-item active" data-view="overview"><span class="icon">📊</span> Overview</div>
+        <div class="sidebar-item" data-view="classrooms"><span class="icon">🏫</span> Classrooms</div>
+        <div class="sidebar-item" data-view="meetings"><span class="icon">🤝</span> Meeting Rooms</div>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-title">Content</div>
+        <div class="sidebar-item" data-view="recordings"><span class="icon">🎬</span> Recordings</div>
+        <div class="sidebar-item" data-view="summaries"><span class="icon">📝</span> Summaries</div>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-title">Communication</div>
+        <div class="sidebar-item" id="nav-chat" onclick="window._openChat && window._openChat()"><span class="icon">💬</span> Chat <span id="chat-unread-indicator" style="display:none;width:8px;height:8px;border-radius:50%;background:#2dd272;margin-left:auto;"></span></div>
+      </div>
+      <div class="sidebar-section" id="sidebar-admin-section">
+        <div class="sidebar-section-title">Admin</div>
+        <div class="sidebar-item" data-view="admin"><span class="icon">⚙️</span> Admin Panel</div>
+        <div class="sidebar-item" data-view="roles" id="nav-roles"><span class="icon">👥</span> User Roles</div>
+      </div>
+    </nav>
+    <div class="sidebar-basic-mode" id="sidebar-basic-mode-toggle">
+      <label class="basic-mode-label" title="Reduces video quality, limits streams, and disables effects for better performance on low-end devices">
+        <input type="checkbox" id="basic-mode-checkbox"> ⚡ Basic Mode
+      </label>
+    </div>
+    <div class="sidebar-user">
+      <div class="sidebar-user-avatar" id="sidebar-avatar">A</div>
+      <div class="sidebar-user-info">
+        <div class="sidebar-user-name" id="sidebar-user-name">User</div>
+        <div class="sidebar-user-role" id="sidebar-user-role">student</div>
+      </div>
+      <button class="sidebar-logout-btn" id="logout-btn" title="Sign Out" onclick="window._logout && window._logout()">⏻</button>
+    </div>
+  </div>
+
+  <div class="dashboard-main">
+    <div class="dashboard-header">
+      <h1 id="dashboard-title">Overview</h1>
+      <div class="dashboard-header-actions">
+        <input type="text" id="user-name-input" placeholder="Your name" style="display:none;" value="">
+        <select id="user-role-select" style="display:none;">
+          <option value="student">Student</option>
+          <option value="instructor">Instructor</option>
+          <option value="admin">Admin</option>
+          <option value="developer">Developer</option>
+          <option value="owner">Owner</option>
+        </select>
+        <span id="header-user-display" class="header-user-badge"></span>
+      </div>
+    </div>
+
+    <div class="dashboard-content" id="dashboard-content">
+      <!-- Dynamic content rendered by JS -->
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ LOBBY ═══════════════ -->
+<div id="lobby-page" class="page lobby-page">
+  <div class="lobby-container">
+    <div>
+      <div class="lobby-title" id="lobby-title">Getting ready...</div>
+      <div class="lobby-subtitle" id="lobby-subtitle"></div>
+    </div>
+    <div class="lobby-preview" id="lobby-preview">
+      <video id="lobby-video" autoplay muted playsinline></video>
+      <div class="lobby-preview-placeholder" id="lobby-placeholder" style="display:none;">
+        <div class="lobby-avatar" id="lobby-avatar">?</div>
+        <span style="color:var(--text-secondary);font-size:14px;">Camera is off</span>
+      </div>
+    </div>
+    <div class="lobby-controls">
+      <button class="lobby-control-btn" id="lobby-mic-btn">🎤</button>
+      <button class="lobby-control-btn" id="lobby-cam-btn">📷</button>
+    </div>
+    <div class="lobby-actions">
+      <button class="btn btn-secondary" id="lobby-back-btn">← Back</button>
+      <button class="btn btn-primary btn-lg" id="lobby-join-btn">Join Now</button>
+    </div>
+    <div class="lobby-waiting" id="lobby-waiting">
+      <div class="spinner"></div>
+      <span style="color:var(--text-secondary);">Waiting for the instructor to let you in...</span>
+      <button class="btn btn-secondary btn-sm" id="lobby-cancel-wait">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ MEETING ═══════════════ -->
+<div id="meeting-page" class="page meeting-page">
+  <div class="meeting-header">
+    <div class="meeting-info">
+      <span class="meeting-info-lock" id="meeting-lock-icon" style="display:none;">🔒</span>
+      <span class="meeting-name" id="meeting-name-display">Room</span>
+      <span class="meeting-id" id="meeting-id-display">ID: ---</span>
+    </div>
+    <div class="meeting-header-right">
+      <div class="recording-indicator" id="recording-indicator"><div class="recording-dot"></div><span>REC</span></div>
+      <div class="connection-bars"><div class="connection-bar"></div><div class="connection-bar"></div><div class="connection-bar"></div><div class="connection-bar"></div></div>
+      <div class="view-toggle">
+        <button class="view-toggle-btn active" id="gallery-view-btn">Gallery</button>
+        <button class="view-toggle-btn" id="speaker-view-btn">Speaker</button>
+      </div>
+      <span class="meeting-timer" id="meeting-timer">00:00</span>
+    </div>
+  </div>
+
+  <div class="meeting-body">
+    <div class="meeting-content">
+      <div class="video-grid-container">
+        <div class="video-grid" id="video-grid" data-count="1"></div>
+        <canvas class="annotation-canvas" id="annotation-canvas"></canvas>
+      </div>
+      <div class="reactions-container" id="reactions-container"></div>
+      <!-- Annotation Toolbar -->
+      <div class="annotation-toolbar" id="annotation-toolbar">
+        <div class="annotation-tool" data-tool="pen" title="Pen">✏️</div>
+        <div class="annotation-tool" data-tool="highlighter" title="Highlighter">🖍️</div>
+        <div class="annotation-tool" data-tool="arrow" title="Arrow">➡️</div>
+        <div class="annotation-tool" data-tool="text" title="Text">🔤</div>
+        <div class="annotation-tool" data-tool="pointer" title="Laser Pointer">🔴</div>
+        <div style="width:1px;height:24px;background:var(--border-color);"></div>
+        <div class="annotation-color active" data-color="#e04040" style="background:#e04040;"></div>
+        <div class="annotation-color" data-color="#2d8cff" style="background:#2d8cff;"></div>
+        <div class="annotation-color" data-color="#2dd272" style="background:#2dd272;"></div>
+        <div class="annotation-color" data-color="#fbbf24" style="background:#fbbf24;"></div>
+        <div class="annotation-color" data-color="#ffffff" style="background:#ffffff;"></div>
+        <div style="width:1px;height:24px;background:var(--border-color);"></div>
+        <input type="range" class="annotation-size" id="annotation-size" min="2" max="20" value="4" title="Brush Size">
+        <div class="annotation-tool" data-tool="undo" title="Undo">↩️</div>
+        <div class="annotation-tool" data-tool="clear" title="Clear All">🗑️</div>
+        <div class="annotation-tool" data-tool="close" title="Close">✕</div>
+      </div>
+    </div>
+
+    <!-- Chat Panel -->
+    <div class="side-panel" id="chat-panel">
+      <div class="panel-header"><h3>💬 Chat</h3><button class="panel-close" id="chat-close-btn">✕</button></div>
+      <div class="chat-messages" id="chat-messages"></div>
+      <div class="chat-input-area">
+        <input type="text" id="chat-input" placeholder="Type a message..." maxlength="500" autocomplete="off">
+        <button class="chat-send-btn" id="chat-send-btn">➤</button>
+      </div>
+    </div>
+
+    <!-- Participants Panel -->
+    <div class="side-panel" id="participants-panel">
+      <div class="panel-header">
+        <h3>👥 Participants</h3>
+        <button class="panel-close" id="participants-close-btn">✕</button>
+      </div>
+      <div class="participants-count" id="participants-count">0 participants</div>
+      <div id="waiting-room-container"></div>
+      <div class="participants-list" id="participants-list"></div>
+    </div>
+
+    <!-- Transcript Panel -->
+    <div class="side-panel" id="transcript-panel">
+      <div class="panel-header">
+        <h3>📝 Live Transcript</h3>
+        <button class="panel-close" id="transcript-close-btn">✕</button>
+      </div>
+      <div class="transcript-entries" id="transcript-entries"></div>
+      <div class="transcript-live" id="transcript-live"></div>
+    </div>
+
+    <!-- Breakout Rooms Panel -->
+    <div class="side-panel" id="breakout-panel">
+      <div class="panel-header">
+        <h3>🏠 Breakout Rooms</h3>
+        <button class="panel-close" id="breakout-close-btn">✕</button>
+      </div>
+      <div style="padding:14px;" id="breakout-content"></div>
+    </div>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="meeting-toolbar" id="meeting-toolbar">
+    <div class="toolbar-drag-handle" id="toolbar-drag-handle" title="Drag to move">⠿</div>
+    <button class="toolbar-collapse-btn" id="toolbar-collapse-btn" title="Collapse toolbar">▼</button>
+    <button class="toolbar-btn" id="toolbar-mic"><div class="toolbar-btn-icon">🎤</div><span class="toolbar-btn-label">Mic</span></button>
+    <button class="toolbar-btn" id="toolbar-camera"><div class="toolbar-btn-icon">📷</div><span class="toolbar-btn-label">Camera</span></button>
+    <button class="toolbar-btn" id="toolbar-screen"><div class="toolbar-btn-icon">🖥️</div><span class="toolbar-btn-label">Share</span></button>
+    <button class="toolbar-btn" id="toolbar-annotate"><div class="toolbar-btn-icon">✏️</div><span class="toolbar-btn-label">Annotate</span></button>
+    <button class="toolbar-btn" id="toolbar-remote" style="display:none;"><div class="toolbar-btn-icon">🖱️</div><span class="toolbar-btn-label">Control</span></button>
+    <div class="toolbar-divider"></div>
+    <button class="toolbar-btn" id="toolbar-participants"><div class="toolbar-btn-icon">👥</div><span class="toolbar-btn-label">People</span><span class="badge" id="participants-badge" style="display:none;">0</span></button>
+    <button class="toolbar-btn" id="toolbar-chat"><div class="toolbar-btn-icon">💬</div><span class="toolbar-btn-label">Chat</span><span class="badge" id="chat-badge" style="display:none;">0</span></button>
+    <button class="toolbar-btn" id="toolbar-persistent-chat" onclick="window._openChat && window._openChat()" title="Open persistent chat in pop-out window"><div class="toolbar-btn-icon">🗨️</div><span class="toolbar-btn-label">Studio Chat</span></button>
+    <button class="toolbar-btn" id="toolbar-transcript"><div class="toolbar-btn-icon">📝</div><span class="toolbar-btn-label">Transcript</span></button>
+    <button class="toolbar-btn" id="toolbar-reactions"><div class="toolbar-btn-icon">😀</div><span class="toolbar-btn-label">React</span></button>
+    <button class="toolbar-btn" id="toolbar-hand"><div class="toolbar-btn-icon">✋</div><span class="toolbar-btn-label">Hand</span></button>
+    <div class="toolbar-divider"></div>
+    <button class="toolbar-btn" id="toolbar-record"><div class="toolbar-btn-icon">⏺️</div><span class="toolbar-btn-label">Record</span></button>
+    <button class="toolbar-btn" id="toolbar-breakout" style="display:none;"><div class="toolbar-btn-icon">🏠</div><span class="toolbar-btn-label">Breakout</span></button>
+    <button class="toolbar-btn" id="toolbar-theme" style="display:none;"><div class="toolbar-btn-icon">🎨</div><span class="toolbar-btn-label">Theme</span></button>
+    <button class="toolbar-btn bot-inject-trigger" id="toolbar-bots" style="display:none;" onclick="window.openBotPanel()"><div class="toolbar-btn-icon">🤖</div><span class="toolbar-btn-label">Bots</span></button>
+    <div class="toolbar-divider"></div>
+    <button class="toolbar-btn-end" id="toolbar-leave">Leave</button>
+  </div>
+
+  <!-- Reactions Picker -->
+  <div class="reactions-picker" id="reactions-picker">
+    <span class="reaction-option" data-emoji="👍">👍</span>
+    <span class="reaction-option" data-emoji="👏">👏</span>
+    <span class="reaction-option" data-emoji="😂">😂</span>
+    <span class="reaction-option" data-emoji="❤️">❤️</span>
+    <span class="reaction-option" data-emoji="🎉">🎉</span>
+    <span class="reaction-option" data-emoji="🤔">🤔</span>
+    <span class="reaction-option" data-emoji="😮">😮</span>
+    <span class="reaction-option" data-emoji="🔥">🔥</span>
+  </div>
+</div>
+
+<!-- ═══════════════ MODALS ═══════════════ -->
+
+<!-- Create Classroom Modal -->
+<div class="modal-overlay" id="create-classroom-modal">
+  <div class="modal">
+    <div class="modal-header"><h3>🏫 Create Classroom</h3><button class="modal-close" onclick="closeModal('create-classroom-modal')">✕</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label>Classroom Name</label><input type="text" id="cls-name" placeholder="e.g. Physics 101"></div>
+      <div class="form-group"><label>Description</label><textarea id="cls-desc" placeholder="Brief description..."></textarea></div>
+      <div class="form-group"><label>Max Students</label><input type="number" id="cls-max" value="50" min="2" max="200"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('create-classroom-modal')">Cancel</button>
+      <button class="btn btn-primary" id="cls-create-btn">Create Classroom</button>
+    </div>
+  </div>
+</div>
+
+<!-- Create Meeting Modal -->
+<div class="modal-overlay" id="create-meeting-modal">
+  <div class="modal">
+    <div class="modal-header"><h3>🤝 Create Meeting Room</h3><button class="modal-close" onclick="closeModal('create-meeting-modal')">✕</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label>Meeting Name</label><input type="text" id="mtg-name" placeholder="e.g. Team Standup"></div>
+      <div class="form-group"><label>Description</label><textarea id="mtg-desc" placeholder="Brief description..."></textarea></div>
+      <div class="form-group"><label>Max Participants</label><input type="number" id="mtg-max" value="100" min="2" max="500"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('create-meeting-modal')">Cancel</button>
+      <button class="btn btn-primary" id="mtg-create-btn">Create Room</button>
+    </div>
+  </div>
+</div>
+
+<!-- Create Breakout Modal -->
+<div class="modal-overlay" id="create-breakout-modal">
+  <div class="modal">
+    <div class="modal-header"><h3>🏠 Create Breakout Room</h3><button class="modal-close" onclick="closeModal('create-breakout-modal')">✕</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label>Room Name</label><input type="text" id="bo-name" placeholder="e.g. Group A"></div>
+      <p style="font-size:13px;color:var(--text-secondary);">You can assign students after creation from the participants panel.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('create-breakout-modal')">Cancel</button>
+      <button class="btn btn-primary" id="bo-create-btn">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- Leave Modal -->
+<div class="modal-overlay" id="leave-modal">
+  <div class="modal" style="max-width:380px;">
+    <div class="modal-header"><h3>Leave Room</h3><button class="modal-close" onclick="closeModal('leave-modal')">✕</button></div>
+    <div class="end-meeting-options">
+      <button class="btn btn-danger btn-block" id="leave-btn">🚪 Leave Room</button>
+      <button class="btn btn-danger btn-block" id="end-meeting-btn" style="display:none;">⛔ End for All</button>
+      <button class="btn btn-secondary btn-block" onclick="closeModal('leave-modal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Theme Customizer Modal -->
+<div class="modal-overlay" id="theme-customizer-modal">
+  <div class="modal" style="max-width:820px;">
+    <div class="modal-header"><h3>🎨 Room Theme Customizer</h3><button class="modal-close" onclick="closeModal('theme-customizer-modal')">✕</button></div>
+    <div class="modal-body" style="max-height:65vh;overflow-y:auto;">
+      
+      <!-- Presets -->
+      <div class="theme-section">
+        <label class="theme-section-title">Theme Presets</label>
+        <div class="theme-presets" id="theme-presets"></div>
+      </div>
+
+      <!-- Colors -->
+      <div class="theme-section">
+        <label class="theme-section-title">Colors</label>
+        <div class="theme-color-grid">
+          <div class="theme-field">
+            <label>Primary</label>
+            <div class="color-input-wrap"><input type="color" id="theme-primaryColor" value="#2d8cff"><span class="color-hex" id="hex-primaryColor">#2d8cff</span></div>
+          </div>
+          <div class="theme-field">
+            <label>Secondary</label>
+            <div class="color-input-wrap"><input type="color" id="theme-secondaryColor" value="#8b5cf6"><span class="color-hex" id="hex-secondaryColor">#8b5cf6</span></div>
+          </div>
+          <div class="theme-field">
+            <label>Accent</label>
+            <div class="color-input-wrap"><input type="color" id="theme-accentColor" value="#2dd272"><span class="color-hex" id="hex-accentColor">#2dd272</span></div>
+          </div>
+          <div class="theme-field">
+            <label>Background</label>
+            <div class="color-input-wrap"><input type="color" id="theme-bgColor" value="#0f0f17"><span class="color-hex" id="hex-bgColor">#0f0f17</span></div>
+          </div>
+          <div class="theme-field">
+            <label>Surface</label>
+            <div class="color-input-wrap"><input type="color" id="theme-bgSecondary" value="#1a1a2e"><span class="color-hex" id="hex-bgSecondary">#1a1a2e</span></div>
+          </div>
+          <div class="theme-field">
+            <label>Header</label>
+            <div class="color-input-wrap"><input type="color" id="theme-headerBg" value="#12121e"><span class="color-hex" id="hex-headerBg">#12121e</span></div>
+          </div>
+          <div class="theme-field">
+            <label>Toolbar</label>
+            <div class="color-input-wrap"><input type="color" id="theme-toolbarBg" value="#111119"><span class="color-hex" id="hex-toolbarBg">#111119</span></div>
+          </div>
+          <div class="theme-field">
+            <label>Panel</label>
+            <div class="color-input-wrap"><input type="color" id="theme-panelBg" value="#161625"><span class="color-hex" id="hex-panelBg">#161625</span></div>
+          </div>
+          <div class="theme-field">
+            <label>Text</label>
+            <div class="color-input-wrap"><input type="color" id="theme-textColor" value="#e8eaed"><span class="color-hex" id="hex-textColor">#e8eaed</span></div>
+          </div>
+          <div class="theme-field">
+            <label>Text Secondary</label>
+            <div class="color-input-wrap"><input type="color" id="theme-textSecondary" value="#9aa0a6"><span class="color-hex" id="hex-textSecondary">#9aa0a6</span></div>
+          </div>
+          <div class="theme-field">
+            <label>Border</label>
+            <div class="color-input-wrap"><input type="color" id="theme-borderColor" value="#2a2a3e"><span class="color-hex" id="hex-borderColor">#2a2a3e</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Typography -->
+      <div class="theme-section">
+        <label class="theme-section-title">Typography</label>
+        <div class="theme-row">
+          <div class="theme-field" style="flex:1;">
+            <label>Font Family</label>
+            <select id="theme-fontFamily" class="theme-select">
+              <option value="Inter, sans-serif">Inter (Default)</option>
+              <option value="'Poppins', sans-serif">Poppins</option>
+              <option value="'Roboto', sans-serif">Roboto</option>
+              <option value="'Space Grotesk', sans-serif">Space Grotesk</option>
+              <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
+              <option value="'Playfair Display', serif">Playfair Display</option>
+              <option value="'DM Sans', sans-serif">DM Sans</option>
+              <option value="system-ui, sans-serif">System UI</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Background -->
+      <div class="theme-section">
+        <label class="theme-section-title">Background</label>
+        <div class="theme-row">
+          <div class="theme-field" style="flex:1;">
+            <label>Pattern</label>
+            <select id="theme-bgPattern" class="theme-select">
+              <option value="none">None</option>
+              <option value="dots">Dots</option>
+              <option value="grid">Grid</option>
+              <option value="diagonal">Diagonal Lines</option>
+              <option value="waves">Waves</option>
+              <option value="circuit">Circuit Board</option>
+              <option value="gradient-radial">Radial Gradient</option>
+              <option value="gradient-mesh">Mesh Gradient</option>
+            </select>
+          </div>
+          <div class="theme-field" style="flex:1;">
+            <label>Background Image URL</label>
+            <input type="text" id="theme-bgImage" placeholder="https://..." class="theme-input">
+          </div>
+        </div>
+      </div>
+
+      <!-- Branding -->
+      <div class="theme-section">
+        <label class="theme-section-title">Branding</label>
+        <div class="theme-row">
+          <div class="theme-field" style="flex:1;">
+            <label>Logo URL</label>
+            <input type="text" id="theme-logoUrl" placeholder="https://..." class="theme-input">
+          </div>
+          <div class="theme-field" style="flex:1;">
+            <label>Banner Text</label>
+            <input type="text" id="theme-bannerText" placeholder="Welcome to my class!" class="theme-input">
+          </div>
+        </div>
+      </div>
+
+      <!-- Layout -->
+      <div class="theme-section">
+        <label class="theme-section-title">Layout & Style</label>
+        <div class="theme-row">
+          <div class="theme-field" style="flex:1;">
+            <label>Layout</label>
+            <select id="theme-layout" class="theme-select">
+              <option value="default">Default</option>
+              <option value="compact">Compact</option>
+              <option value="spacious">Spacious</option>
+              <option value="focused">Focused (Speaker Priority)</option>
+            </select>
+          </div>
+          <div class="theme-field" style="flex:1;">
+            <label>Video Tile Radius</label>
+            <input type="range" id="theme-videoGridRadius" min="0" max="24" value="12" class="theme-range">
+            <span id="theme-videoGridRadius-val" style="font-size:12px;color:var(--text-secondary);">12px</span>
+          </div>
+          <div class="theme-field" style="flex:1;">
+            <label>Toolbar Style</label>
+            <select id="theme-toolbarStyle" class="theme-select">
+              <option value="default">Default</option>
+              <option value="floating">Floating</option>
+              <option value="minimal">Minimal</option>
+              <option value="pill">Pill</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Preview -->
+      <div class="theme-section">
+        <label class="theme-section-title">Preview</label>
+        <div class="theme-preview" id="theme-preview">
+          <div class="theme-preview-header" id="tp-header">
+            <span id="tp-logo"></span>
+            <span id="tp-name">Room Name</span>
+            <span id="tp-banner"></span>
+          </div>
+          <div class="theme-preview-grid" id="tp-grid">
+            <div class="tp-tile" id="tp-tile1"><span>👤 User 1</span></div>
+            <div class="tp-tile" id="tp-tile2"><span>👤 User 2</span></div>
+            <div class="tp-tile" id="tp-tile3"><span>👤 User 3</span></div>
+            <div class="tp-tile" id="tp-tile4"><span>👤 User 4</span></div>
+          </div>
+          <div class="theme-preview-toolbar" id="tp-toolbar">
+            <span class="tp-btn">🎤</span><span class="tp-btn">📷</span><span class="tp-btn">🖥️</span><span class="tp-btn">💬</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="theme-reset-btn">Reset to Default</button>
+      <button class="btn btn-secondary" onclick="closeModal('theme-customizer-modal')">Cancel</button>
+      <button class="btn btn-primary" id="theme-save-btn">💾 Save Theme</button>
+    </div>
+  </div>
+</div>
+
+<!-- Summary View Modal -->
+<div class="modal-overlay" id="summary-view-modal">
+  <div class="modal" style="max-width:700px;">
+    <div class="modal-header"><h3>📝 Meeting Summary</h3><button class="modal-close" onclick="closeModal('summary-view-modal')">✕</button></div>
+    <div class="modal-body" id="summary-view-content"></div>
+  </div>
+</div>
+
+<!-- Remote Control Request Modal -->
+<div class="modal-overlay" id="remote-control-modal">
+  <div class="modal" style="max-width:440px;">
+    <div class="modal-header"><h3>🖱️ Remote Control Request</h3><button class="modal-close" onclick="closeModal('remote-control-modal')">✕</button></div>
+    <div class="modal-body" style="text-align:center;padding:24px;">
+      <div style="font-size:48px;margin-bottom:16px;">🖱️</div>
+      <p style="font-size:16px;margin-bottom:8px;"><strong id="rc-requester-name">Someone</strong> is requesting to control your screen.</p>
+      <p style="font-size:13px;color:var(--text-secondary);margin-bottom:20px;">They will be able to move your mouse and type on your shared screen. You can revoke access at any time.</p>
+      <div style="display:flex;gap:12px;justify-content:center;">
+        <button class="btn btn-danger" id="rc-deny-btn" style="min-width:120px;">✕ Deny</button>
+        <button class="btn btn-primary" id="rc-approve-btn" style="min-width:120px;">✓ Allow</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Remote Control Active Bar -->
+<div class="remote-control-bar" id="remote-control-bar" style="display:none;">
+  <div class="rc-bar-inner">
+    <span class="rc-bar-icon">🖱️</span>
+    <span class="rc-bar-text" id="rc-bar-text">Remote control active</span>
+    <button class="btn btn-sm btn-danger" id="rc-bar-stop">⏹ Stop Control</button>
+  </div>
+</div>
+
+<!-- Remote Control Cursor Overlay -->
+<div class="remote-cursor-overlay" id="remote-cursor-overlay" style="display:none;">
+  <div class="remote-cursor" id="remote-cursor">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M5 3l14 8-6 2-4 6-4-16z" fill="#2d8cff" stroke="#fff" stroke-width="1.5"/></svg>
+    <span class="remote-cursor-label" id="remote-cursor-label">User</span>
+  </div>
+</div>
+
+<!-- Integrations Modal -->
+<div class="modal-overlay" id="integrations-modal">
+  <div class="modal" style="max-width:700px;">
+    <div class="modal-header"><h3>🔗 Integrations</h3><button class="modal-close" onclick="closeModal('integrations-modal')">✕</button></div>
+    <div class="modal-body" style="max-height:65vh;overflow-y:auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <p style="color:var(--text-secondary);font-size:13px;margin:0;">Connect external services to receive meeting summaries and notifications.</p>
+        <button class="btn btn-primary btn-sm" id="add-integration-btn">+ Add Integration</button>
+      </div>
+      <div id="integrations-list"></div>
+
+      <!-- Add Integration Form (hidden by default) -->
+      <div id="integration-form" style="display:none;border:1px solid var(--border-color);border-radius:12px;padding:16px;margin-top:16px;">
+        <h4 style="margin:0 0 12px;">New Integration</h4>
+        <div class="form-group">
+          <label>Type</label>
+          <select id="int-type" style="width:100%;padding:8px 12px;">
+            <option value="slack">Slack (Webhook)</option>
+            <option value="discord">Discord (Webhook)</option>
+            <option value="webhook">Generic Webhook</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Name</label>
+          <input type="text" id="int-name" placeholder="e.g. Team Slack Channel" style="width:100%;">
+        </div>
+        <div class="form-group">
+          <label>Webhook URL</label>
+          <input type="text" id="int-url" placeholder="https://hooks.slack.com/services/..." style="width:100%;">
+        </div>
+        <div class="form-group">
+          <label>Events</label>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;">
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;">
+              <input type="checkbox" id="int-evt-summary" checked> Summary Generated
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;">
+              <input type="checkbox" id="int-evt-recording"> Recording Uploaded
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;">
+              <input type="checkbox" id="int-evt-meeting"> Meeting Started/Ended
+            </label>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+          <button class="btn btn-secondary btn-sm" id="int-cancel-btn">Cancel</button>
+          <button class="btn btn-primary btn-sm" id="int-save-btn">💾 Save Integration</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- AI Summary Modal -->
+<div class="modal-overlay" id="ai-summary-modal">
+  <div class="modal" style="max-width:750px;">
+    <div class="modal-header"><h3>🤖 AI Meeting Summary</h3><button class="modal-close" onclick="closeModal('ai-summary-modal')">✕</button></div>
+    <div class="modal-body" style="max-height:65vh;overflow-y:auto;" id="ai-summary-content">
+      <div style="text-align:center;padding:40px;">
+        <div class="spinner"></div>
+        <p style="color:var(--text-secondary);margin-top:12px;">Generating summary...</p>
+      </div>
+    </div>
+    <div class="modal-footer" id="ai-summary-footer" style="display:none;">
+      <button class="btn btn-secondary" id="summary-export-md">📄 Export Markdown</button>
+      <button class="btn btn-secondary" id="summary-send-integrations">🔗 Send to Integrations</button>
+      <button class="btn btn-primary" onclick="closeModal('ai-summary-modal')">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Video Player Modal ── -->
+<div class="modal-overlay" id="video-player-modal">
+  <div class="modal video-player-modal-content">
+    <div class="modal-header video-player-header">
+      <div class="video-player-title">
+        <h3 id="video-player-name">Recording</h3>
+        <span class="video-player-meta" id="video-player-meta"></span>
+      </div>
+      <button class="modal-close" onclick="closeVideoPlayer()">✕</button>
+    </div>
+    <div class="modal-body video-player-body">
+      <div class="video-container">
+        <video id="video-player" controls preload="metadata">
+          Your browser does not support HTML5 video.
+        </video>
+      </div>
+      <div class="video-controls-bar">
+        <div class="video-speed-controls">
+          <label>Speed:</label>
+          <button class="speed-btn" data-speed="0.5">0.5×</button>
+          <button class="speed-btn" data-speed="0.75">0.75×</button>
+          <button class="speed-btn active" data-speed="1">1×</button>
+          <button class="speed-btn" data-speed="1.25">1.25×</button>
+          <button class="speed-btn" data-speed="1.5">1.5×</button>
+          <button class="speed-btn" data-speed="2">2×</button>
+        </div>
+        <div class="video-action-buttons">
+          <button class="btn btn-sm" id="video-fullscreen-btn" title="Fullscreen">⛶</button>
+          <button class="btn btn-sm" id="video-download-btn" title="Download">⬇</button>
+        </div>
+      </div>
+      <div class="video-info-panel">
+        <div class="video-info-grid">
+          <div class="video-info-item"><span class="label">Instructor:</span> <span id="vp-instructor">—</span></div>
+          <div class="video-info-item"><span class="label">Date:</span> <span id="vp-date">—</span></div>
+          <div class="video-info-item"><span class="label">Duration:</span> <span id="vp-duration">—</span></div>
+          <div class="video-info-item"><span class="label">Size:</span> <span id="vp-size">—</span></div>
+          <div class="video-info-item"><span class="label">Room:</span> <span id="vp-room">—</span></div>
+          <div class="video-info-item"><span class="label">Type:</span> <span id="vp-type">—</span></div>
+          <div class="video-info-item"><span class="label">Views:</span> <span id="vp-views">—</span></div>
+          <div class="video-info-item"><span class="label">Status:</span> <span id="vp-status">—</span></div>
+        </div>
+        <div class="video-tags" id="vp-tags"></div>
+        <div class="video-description" id="vp-description"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Role Management Modal ── -->
+<div class="modal-overlay" id="role-management-modal">
+  <div class="modal" style="max-width:550px;">
+    <div class="modal-header"><h3>👥 Change User Role</h3><button class="modal-close" onclick="closeModal('role-management-modal')">✕</button></div>
+    <div class="modal-body">
+      <p id="role-change-user-info" style="margin-bottom:12px;"></p>
+      <div class="auth-field">
+        <label for="role-change-select">New Role</label>
+        <select id="role-change-select">
+          <option value="student">Student</option>
+          <option value="instructor">Instructor</option>
+          <option value="admin">Admin</option>
+          <option value="developer">Developer</option>
+          <option value="owner">Owner</option>
+        </select>
+      </div>
+      <input type="hidden" id="role-change-user-id">
+      <div id="role-change-error" class="auth-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('role-management-modal')">Cancel</button>
+      <button class="btn btn-primary" id="role-change-save-btn">Save Role</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Bot Injection Panel (developer+ only) ── -->
+<div class="modal-overlay" id="bot-inject-modal">
+  <div class="modal" style="max-width:520px;">
+    <div class="modal-header"><h3>🤖 Bot Stress Tester</h3><button class="modal-close" onclick="closeModal('bot-inject-modal')">✕</button></div>
+    <div class="modal-body">
+      <p style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">
+        Inject simulated participants into the current room for bandwidth/stress testing. Developer+ only.
+      </p>
+      <div class="auth-field">
+        <label for="bot-count">Number of Bots (1-50)</label>
+        <input type="number" id="bot-count" value="5" min="1" max="50" style="width:100%;padding:8px 12px;background:var(--bg-color);color:var(--text-color);border:1px solid var(--border-color);border-radius:8px;">
+      </div>
+      <div class="auth-field" style="margin-top:10px;">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="bot-video" checked> Enable video (canvas-generated)
+        </label>
+      </div>
+      <div class="auth-field" style="margin-top:6px;">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="bot-audio" checked> Enable audio (silent)
+        </label>
+      </div>
+      <div class="auth-field" style="margin-top:6px;">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="bot-activity" checked> Simulate activity (chat, hand raises)
+        </label>
+      </div>
+      <div class="bot-status-bar" id="bot-status-bar" style="display:none;margin-top:14px;padding:10px 14px;background:var(--bg-color);border-radius:8px;border:1px solid var(--border-color);">
+        <span id="bot-status-text" style="font-size:13px;color:var(--text-secondary);">No bots active</span>
+      </div>
+      <div id="bot-inject-error" class="auth-error" style="display:none;margin-top:8px;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" id="bot-remove-all-btn" style="margin-right:auto;">Remove All Bots</button>
+      <button class="btn btn-secondary" onclick="closeModal('bot-inject-modal')">Close</button>
+      <button class="btn btn-primary" id="bot-inject-btn">🤖 Inject Bots</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Student Assignment Modal ── -->
+<div class="modal-overlay" id="assign-students-modal">
+  <div class="modal" style="max-width:600px;">
+    <div class="modal-header"><h3>📚 Assign Students to Classroom</h3><button class="modal-close" onclick="closeModal('assign-students-modal')">✕</button></div>
+    <div class="modal-body">
+      <p style="color:var(--text-secondary);font-size:13px;margin-bottom:10px;" id="assign-classroom-info"></p>
+      <div class="auth-field">
+        <label>Search Students</label>
+        <input type="text" id="assign-search" placeholder="Search by name..." style="width:100%;padding:8px 12px;background:var(--bg-color);color:var(--text-color);border:1px solid var(--border-color);border-radius:8px;">
+      </div>
+      <div id="assign-students-list" style="max-height:280px;overflow-y:auto;margin-top:10px;"></div>
+      <input type="hidden" id="assign-classroom-id">
+      <div class="auth-field" style="margin-top:12px;">
+        <label>Currently Assigned</label>
+        <div id="assign-current-list" style="max-height:150px;overflow-y:auto;margin-top:6px;"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('assign-students-modal')">Close</button>
+    </div>
+  </div>
+</div>
+
+</div><!-- /app -->
+
+<div class="toast-container" id="toast-container"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
