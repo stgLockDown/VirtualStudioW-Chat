@@ -21,6 +21,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── App info ────────────────────────────────────────────────────────────
   getVersion: () => ipcRenderer.invoke('get-version'),
 
+  // ── Update check ──────────────────────────────────────────────────────────
+  checkForUpdates: () => ipcRenderer.send('check-for-updates'),
+
   // ── Environment flags ───────────────────────────────────────────────────
   isElectron: true,
 });

@@ -1,23 +1,86 @@
-const { app, BrowserWindow, screen, ipcMain, desktopCapturer, session, Menu, Tray, nativeImage } = require('electron');
+const { app, BrowserWindow, screen, ipcMain, desktopCapturer, session, Menu, Tray, nativeImage, shell, dialog } = require('electron');
 const path = require('path');
+const https = require('https');
 
 // ── Target server URL ──────────────────────────────────────────────────────────
 // Change this to your Railway deployment URL
 const SERVER_URL = process.env.VS_SERVER_URL || 'https://virtualstudiow-chat-production.up.railway.app';
 
 const IS_DEV = process.argv.includes('--dev');
+const CURRENT_VERSION = app.getVersion(); // e.g. "1.3.0"
 
 // ── Fix taskbar pinning for portable EXE ────────────────────────────────────
-// Set App User Model ID so Windows can properly pin the app
 app.setAppUserModelId('com.virtualstudio.chat');
 
-// If running as a portable app, relaunch from the original exe path
-// This prevents "pathway not found" when pinned to taskbar
 if (process.env.PORTABLE_EXECUTABLE_FILE) {
   app.setPath('userData', path.join(path.dirname(process.env.PORTABLE_EXECUTABLE_FILE), '.virtualstudio-data'));
 }
 
 let splash, mainWin, chatWin, tray;
+
+// ── Auto-update check ───────────────────────────────────────────────────────
+// Checks the GitHub releases API for a newer version. If found, prompts the
+// user to download it. The actual app content (HTML/CSS/JS) is always fresh
+// from Railway — this only covers launcher-level changes (Electron, preload, IPC).
+function checkForUpdates(silent = false) {
+  const options = {
+    hostname: 'api.github.com',
+    path: '/repos/stgLockDown/VirtualStudioW-Chat/releases/latest',
+    headers: { 'User-Agent': 'VirtualStudio-Launcher/' + CURRENT_VERSION }
+  };
+
+  https.get(options, (res) => {
+    let data = '';
+    res.on('data', chunk => { data += chunk; });
+    res.on('end', () => {
+      try {
+        const release = JSON.parse(data);
+        const latestTag = (release.tag_name || '').replace(/^v/, '');
+        if (!latestTag) return;
+
+        if (compareVersions(latestTag, CURRENT_VERSION) > 0) {
+          // Newer version available
+          const exeAsset = (release.assets || []).find(a => a.name.endsWith('.exe'));
+          const downloadUrl = exeAsset ? exeAsset.browser_download_url : release.html_url;
+
+          dialog.showMessageBox(mainWin, {
+            type: 'info',
+            title: 'Update Available',
+            message: `Virtual Studio v${latestTag} is available!`,
+            detail: `You are running v${CURRENT_VERSION}.\n\nNote: Your app content is always up-to-date via the server — this update only includes launcher improvements (performance, screen sharing, etc.).\n\n${release.body ? release.body.slice(0, 300) : ''}`,
+            buttons: ['Download Update', 'Remind Me Later'],
+            defaultId: 0,
+            cancelId: 1,
+            icon: nativeImage.createFromPath(path.join(__dirname, 'build', 'icon.png'))
+          }).then(({ response }) => {
+            if (response === 0) {
+              shell.openExternal(downloadUrl);
+            }
+          });
+        } else if (!silent) {
+          dialog.showMessageBox(mainWin, {
+            type: 'info',
+            title: 'No Updates',
+            message: `You're running the latest version (v${CURRENT_VERSION}).`,
+            detail: 'Your app content is always up-to-date via the server — no action needed!',
+            buttons: ['OK']
+          });
+        }
+      } catch (e) { /* silently ignore parse errors */ }
+    });
+  }).on('error', () => { /* silently ignore network errors */ });
+}
+
+// Simple semver compare: returns >0 if a > b, 0 if equal, <0 if a < b
+function compareVersions(a, b) {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const diff = (pa[i] || 0) - (pb[i] || 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
 
 // ── Splash screen ──────────────────────────────────────────────────────────────
 function createSplash() {
@@ -157,6 +220,9 @@ app.whenReady().then(() => {
 
   // ── App version ───────────────────────────────────────────────────────────
   ipcMain.handle('get-version', () => app.getVersion());
+
+  // ── Manual update check from renderer ──────────────────────────────────────
+  ipcMain.on('check-for-updates', () => checkForUpdates(false));
 
   // ── Screen share: provide sources to renderer ──────────────────────────────
   ipcMain.handle('get-screen-sources', async () => {
@@ -323,6 +389,9 @@ app.whenReady().then(() => {
       if (splash && !splash.isDestroyed()) { splash.close(); splash = null; }
       mainWin.show();
       if (IS_DEV) mainWin.webContents.openDevTools();
+
+      // Check for launcher updates silently on startup (after 5s)
+      setTimeout(() => checkForUpdates(true), 5000);
     }, 600);
   });
 

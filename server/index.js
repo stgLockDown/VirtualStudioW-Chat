@@ -81,6 +81,18 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Launcher version endpoint — tells the web app what the minimum launcher version is
+// The web app compares this against electronAPI.getVersion() and prompts to update if needed
+app.get('/api/launcher-version', (req, res) => {
+  res.json({
+    minVersion: '1.3.0',        // Minimum launcher version required
+    latestVersion: '1.3.0',     // Latest available launcher version
+    downloadUrl: 'https://github.com/stgLockDown/VirtualStudioW-Chat/releases/latest',
+    updateRequired: false,       // Set true to force-block old launchers
+    message: ''                  // Optional message to show users
+  });
+});
+
 // Recording uploads
 const recordingsDir = process.env.RECORDINGS_DIR || path.join(__dirname, '..', 'recordings');
 fs.mkdirSync(recordingsDir, { recursive: true });
