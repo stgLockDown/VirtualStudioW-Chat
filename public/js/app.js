@@ -299,21 +299,7 @@ async function renderRecordings(c) {
       <button class="pagination-btn" id="rec-next" ${parseInt(S._recOffset || 0) + 50 >= total ? 'disabled' : ''}>Next →</button>
     </div>` : ''}`;
 
-  // Bind events
-  const searchInput = document.getElementById('rec-search');
-  let searchTimeout;
-  if (searchInput) searchInput.addEventListener('input', () => {
-    clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(() => { S._recSearch = searchInput.value; S._recOffset = 0; renderRecordings(c); }, 300);
-  });
-  document.getElementById('rec-filter-instructor')?.addEventListener('change', e => { S._recInstructor = e.target.value; S._recOffset = 0; renderRecordings(c); });
-  document.getElementById('rec-filter-tag')?.addEventListener('change', e => { S._recTag = e.target.value; S._recOffset = 0; renderRecordings(c); });
-  document.getElementById('rec-filter-status')?.addEventListener('change', e => { S._recStatus = e.target.value; S._recOffset = 0; renderRecordings(c); });
-  document.getElementById('rec-sort')?.addEventListener('change', e => { S._recSortBy = e.target.value; renderRecordings(c); });
-  document.querySelectorAll('.view-toggle-icon').forEach(btn => btn.addEventListener('click', () => { S._recViewMode = btn.dataset.viewMode; renderRecordings(c); }));
-  document.querySelectorAll('.recording-card, .recording-list-item').forEach(el => el.addEventListener('click', () => openVideoPlayer(el.dataset.recId)));
-  document.getElementById('rec-prev')?.addEventListener('click', () => { S._recOffset = Math.max(0, parseInt(S._recOffset || 0) - 50); renderRecordings(c); });
-  document.getElementById('rec-next')?.addEventListener('click', () => { S._recOffset = parseInt(S._recOffset || 0) + 50; renderRecordings(c); });
+  // Event delegation is now in init() - no duplicate listeners here
 }
 
 function renderRecordingsGrid(recordings) {
@@ -2867,6 +2853,43 @@ function init(){
   // Sidebar nav
   $$('.sidebar-item[data-view]').forEach(item=>{
     item.addEventListener('click',()=>{S.currentView=item.dataset.view;loadDashboard();});
+  });
+
+  // Recordings page - Event delegation (fixes listener duplication issue)
+  $('#dashboard-content').addEventListener('input', (e) => {
+    if (e.target.id === 'rec-search') {
+      clearTimeout(S._recSearchTimeout);
+      S._recSearchTimeout = setTimeout(() => { S._recSearch = e.target.value; S._recOffset = 0; renderRecordings($('#dashboard-content')); }, 300);
+    }
+  });
+  $('#dashboard-content').addEventListener('change', (e) => {
+    const c = $('#dashboard-content');
+    if (e.target.id === 'rec-filter-instructor') { S._recInstructor = e.target.value; S._recOffset = 0; renderRecordings(c); }
+    else if (e.target.id === 'rec-filter-tag') { S._recTag = e.target.value; S._recOffset = 0; renderRecordings(c); }
+    else if (e.target.id === 'rec-filter-status') { S._recStatus = e.target.value; S._recOffset = 0; renderRecordings(c); }
+    else if (e.target.id === 'rec-sort') { S._recSortBy = e.target.value; renderRecordings(c); }
+  });
+  $('#dashboard-content').addEventListener('click', (e) => {
+    const c = $('#dashboard-content');
+    // View toggle buttons
+    if (e.target.classList.contains('view-toggle-icon')) {
+      S._recViewMode = e.target.dataset.viewMode;
+      renderRecordings(c);
+    }
+    // Recording cards/list items
+    const recordingEl = e.target.closest('.recording-card, .recording-list-item');
+    if (recordingEl) {
+      openVideoPlayer(recordingEl.dataset.recId);
+    }
+    // Pagination buttons
+    if (e.target.id === 'rec-prev') {
+      S._recOffset = Math.max(0, parseInt(S._recOffset || 0) - 50);
+      renderRecordings(c);
+    }
+    if (e.target.id === 'rec-next') {
+      S._recOffset = parseInt(S._recOffset || 0) + 50;
+      renderRecordings(c);
+    }
   });
 
   // User name/role (will be overridden by auth)
