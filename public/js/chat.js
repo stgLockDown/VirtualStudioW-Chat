@@ -51,7 +51,7 @@
     state.token = urlParams.get('token') || localStorage.getItem('vs-token');
 
     if (!state.token) {
-      showError('Not authenticated. Please log in to Virtual Studio first.');
+      showError('Not authenticated. Please log in to GameU first.');
       return;
     }
 
@@ -91,7 +91,7 @@
     $('#currentUserName').textContent = state.user.name;
     $('#sidebarUserName').textContent = state.user.name;
     $('#currentUserStatus').textContent = 'Active';
-    document.title = `Virtual Studio — Chat · ${state.user.name}`;
+    document.title = `GameU — Chat · ${state.user.name}`;
   }
 
   // ——— Socket.IO Connection ——————————————————————————————
@@ -139,7 +139,28 @@
       showConnectionBar('disconnected', 'Unable to connect — retrying…');
     });
 
-    // ——— Socket Event Handlers ———————————————————————————
+    // GameU Heartbeat - Keep chat UI in sync
+    s.on('heartbeat', (data) => {
+      console.log('[Chat] Heartbeat received:', data.serverTime);
+      // Update connection status bar
+      showConnectionBar('connected', 'Connected');
+      // Auto-refresh channel list if we're viewing channels
+      if (state.currentChannel) {
+        // Silently refresh messages for current channel
+        s.emit('get_messages', { channel_id: state.currentChannel }, (resp) => {
+          if (resp && resp.messages) {
+            // Only update if there are new messages
+            const currentCount = state.messages.length;
+            if (resp.messages.length !== currentCount) {
+              state.messages = resp.messages;
+              renderMessages();
+            }
+          }
+        });
+      }
+    });
+
+    // ———— Socket Event Handlers ————————————————
     s.on('new_message', (data) => {
       // Server sends { message: {...} }
       const msg = data.message || data;

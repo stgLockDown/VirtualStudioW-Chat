@@ -38,6 +38,28 @@ console.log('[Server] __dirname:', __dirname);
 console.log('[Server] Node version:', process.version);
 console.log('[Server] Platform:', process.platform);
 
+// GameU Heartbeat System - Periodic UI sync
+let heartbeatInterval = null;
+const HEARTBEAT_INTERVAL = 30000; // 30 seconds
+
+function startHeartbeat() {
+  if (heartbeatInterval) clearInterval(heartbeatInterval);
+  heartbeatInterval = setInterval(() => {
+    // Emit heartbeat to all connected clients
+    io.emit('heartbeat', { 
+      timestamp: Date.now(),
+      serverTime: new Date().toISOString()
+    });
+    
+    // Also emit to chat namespace
+    const chatNs = io.of('/chat');
+    chatNs.emit('heartbeat', {
+      timestamp: Date.now(),
+      serverTime: new Date().toISOString()
+    });
+  }, HEARTBEAT_INTERVAL);
+}
+
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -653,7 +675,7 @@ app.post('/api/integrations/:id/test', async (req, res) => {
     const row = await db.getOne('SELECT * FROM integrations WHERE id = $1', [req.params.id]);
     if (!row) return res.status(404).json({ error: 'Not found' });
     const config = JSON.parse(row.config || '{}');
-    const result = await sendWebhook(row.type, config, { event: 'test', message: '🧪 Test notification from Virtual Studio', timestamp: new Date().toISOString() });
+    const result = await sendWebhook(row.type, config, { event: 'test', message: '🧪 Test notification from GameU', timestamp: new Date().toISOString() });
     res.json({ success: true, result });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -663,7 +685,7 @@ async function sendWebhook(type, config, payload) {
   const url = config.webhookUrl || config.url;
   if (!url) throw new Error('No webhook URL configured');
   if (type === 'slack') {
-    const body = { text: payload.message || 'Virtual Studio Notification', blocks: [] };
+    const body = { text: payload.message || 'GameU Notification', blocks: [] };
     if (payload.event === 'summary_generated' && payload.summary) {
       body.blocks = [
         { type: 'header', text: { type: 'plain_text', text: `📝 Meeting Summary: ${payload.summary.title || payload.summary.roomName || 'Meeting'}` } },
@@ -676,8 +698,8 @@ async function sendWebhook(type, config, payload) {
       body.text = `Meeting Summary: ${payload.summary.title || 'Meeting'}`;
     } else if (payload.event === 'test') {
       body.blocks = [
-        { type: 'header', text: { type: 'plain_text', text: '🧪 Virtual Studio Test' } },
-        { type: 'section', text: { type: 'mrkdwn', text: 'This is a test notification from Virtual Studio. Your integration is working!' } },
+        { type: 'header', text: { type: 'plain_text', text: '🧪 GameU Test' } },
+        { type: 'section', text: { type: 'mrkdwn', text: 'This is a test notification from GameU. Your integration is working!' } },
         { type: 'context', elements: [{ type: 'mrkdwn', text: `Sent at ${new Date().toLocaleString()}` }] }
       ];
     }
@@ -685,7 +707,7 @@ async function sendWebhook(type, config, payload) {
     if (!resp.ok) throw new Error(`Slack returned ${resp.status}`);
     return { status: resp.status };
   } else if (type === 'discord') {
-    const body = { content: payload.message || 'Virtual Studio Notification', embeds: [] };
+    const body = { content: payload.message || 'GameU Notification', embeds: [] };
     if (payload.event === 'summary_generated' && payload.summary) {
       body.embeds.push({
         title: `📝 ${payload.summary.title || payload.summary.roomName || 'Meeting Summary'}`,
@@ -1536,8 +1558,9 @@ const PORT = process.env.PORT || 3000;
 async function startServer() {
   try {
     await db.initDatabase();
+    startHeartbeat(); // Start the heartbeat system
     server.listen(PORT, '0.0.0.0', () => {
-      console.log(`\n🎓 Virtual Studio Server running on port ${PORT}`);
+      console.log(`\n🎮 GameU Server running on port ${PORT}`);
       console.log(`   Local: http://localhost:${PORT}\n`);
     });
   } catch (err) {
