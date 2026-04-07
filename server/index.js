@@ -175,12 +175,15 @@ function autoThemeFromName(name) {
 // Broadcast waiting room update to all privileged participants (host + instructor+)
 function emitWaitingRoomUpdate(room, roomId) {
   const waitingList = Array.from(room.waitingList.entries()).map(([id, w]) => ({ id, name: w.name, role: w.role, joinedAt: w.joinedAt }));
+  console.log('[WaitingRoom] Emitting update for room:', roomId, 'Host:', room.hostId, 'Waiting count:', waitingList.length);
   // Send to host
   io.to(room.hostId).emit('waiting-room-update', { waitingList });
+  console.log('[WaitingRoom] Sent to host socket:', room.hostId);
   // Also send to all other privileged users (instructor+) in the room
   room.participants.forEach((p, pid) => {
     if (pid !== room.hostId && db.hasRoleAtLeast(p.role || 'student', 'instructor')) {
       io.to(pid).emit('waiting-room-update', { waitingList });
+      console.log('[WaitingRoom] Sent to privileged user:', pid, p.name);
     }
   });
 }
@@ -1211,11 +1214,24 @@ io.on('connection', (socket) => {
 
   // ── Admit / Deny from Waiting Room ──
   socket.on('admit-participant', ({ participantId }) => {
-    const user = socketToUser.get(socket.id); if (!user) return;
-    const room = liveRooms.get(user.roomId); if (!room) return;
+    console.log('[Admit] Request from socket:', socket.id);
+    const user = socketToUser.get(socket.id);
+    if (!user) { console.log('[Admit] No user found for socket'); return; }
+    console.log('[Admit] User:', user.name, 'Role:', user.role);
+    
+    const room = liveRooms.get(user.roomId);
+    if (!room) { console.log('[Admit] No room found:', user.roomId); return; }
+    console.log('[Admit] Room found:', room.name, 'Host:', room.hostId);
+    console.log('[Admit] Waiting list:', Array.from(room.waitingList.keys()));
+    
     const canAdmit = socket.id === room.hostId || db.hasRoleAtLeast(user.role || 'student', 'instructor');
-    if (!canAdmit) return;
-    const waiting = room.waitingList.get(participantId); if (!waiting) return;
+    console.log('[Admit] Can admit:', canAdmit, 'IsHost:', socket.id === room.hostId);
+    if (!canAdmit) { console.log('[Admit] Permission denied'); return; }
+    
+    const waiting = room.waitingList.get(participantId);
+    if (!waiting) { console.log('[Admit] Participant not in waiting list:', participantId); return; }
+    console.log('[Admit] Admitting participant:', waiting.name);
+    
     room.waitingList.delete(participantId);
     const participant = { name: waiting.name, role: waiting.role, isHost: false, audioEnabled: !room.settings.muteOnEntry, videoEnabled: true, screenSharing: false, handRaised: false, joinedAt: Date.now() };
     room.participants.set(participantId, participant);
@@ -1226,6 +1242,7 @@ io.on('connection', (socket) => {
     io.to(user.roomId).emit('participants-update', { participants: getParticipantList(room) });
     emitWaitingRoomUpdate(room, user.roomId);
     updateLiveRoomInDB(room);
+    console.log('[Admit] Participant admitted successfully');
   });
 
   socket.on('admit-all', () => {
