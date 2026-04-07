@@ -724,7 +724,7 @@ window.deleteIntegration=async function(id){
 // ─── Room Start / Join ──────────────────────────────────────────
 window.startRoom=function(id,type,name){
   S.roomId=id; S.roomType=type; S.roomName=name; S.isHost=true;
-  goToLobby();
+  goToLobbyInternal();
 };
 
 function updateLobbyControls(){
