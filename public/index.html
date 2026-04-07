@@ -785,6 +785,61 @@
   </div>
 </div>
 
+<!-- Student Reschedule Modal (shown when student joins a class) -->
+<div class="modal-overlay" id="student-reschedule-modal">
+  <div class="modal" style="max-width:500px;">
+    <div class="modal-header"><h3>📅 Need to Reschedule?</h3><button class="modal-close" onclick="closeModal('student-reschedule-modal')">✕</button></div>
+    <div class="modal-body">
+      <p style="color:var(--text-secondary);font-size:14px;margin-bottom:16px;">Before joining this class, please confirm your attendance or request a reschedule.</p>
+      <div style="background:var(--bg-secondary);padding:16px;border-radius:8px;margin-bottom:16px;">
+        <p style="font-size:13px;color:var(--text-secondary);margin:0 0 8px 0;"><strong>Class:</strong> <span id="reschedule-class-name">-</span></p>
+        <p style="font-size:13px;color:var(--text-secondary);margin:0 0 8px 0;"><strong>Date/Time:</strong> <span id="reschedule-datetime">-</span></p>
+        <p style="font-size:11px;color:#888;margin:0;"><strong>Timestamp:</strong> <span id="reschedule-timestamp">-</span></p>
+      </div>
+      <div class="auth-field">
+        <label>If you need to reschedule, select a preferred time:</label>
+        <input type="datetime-local" id="reschedule-preferred-time" style="width:100%;padding:10px;background:var(--bg-color);color:var(--text-color);border:1px solid var(--border-color);border-radius:8px;">
+      </div>
+      <div class="auth-field">
+        <label>Reason (optional):</label>
+        <textarea id="reschedule-reason" placeholder="Brief reason for rescheduling..." style="width:100%;padding:10px;background:var(--bg-color);color:var(--text-color);border:1px solid var(--border-color);border-radius:8px;min-height:60px;resize:vertical;"></textarea>
+      </div>
+      <p style="font-size:11px;color:#888;margin-top:8px;">This information is recorded for attendance tracking purposes.</p>
+    </div>
+    <div class="modal-footer" style="display:flex;gap:8px;justify-content:space-between;">
+      <button class="btn btn-secondary" id="reschedule-skip-btn" onclick="window.skipReschedule()">Skip (Demo Mode)</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-primary" onclick="window.confirmAttendance()">I'm Ready to Join</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Student Signature Modal (shown after reschedule confirmation) -->
+<div class="modal-overlay" id="student-signature-modal">
+  <div class="modal" style="max-width:500px;">
+    <div class="modal-header"><h3>✍️ Sign In</h3><button class="modal-close" onclick="closeModal('student-signature-modal')">✕</button></div>
+    <div class="modal-body">
+      <p style="color:var(--text-secondary);font-size:14px;margin-bottom:16px;">Please sign below to confirm your attendance. This signature will be stored for records.</p>
+      <div style="background:var(--bg-secondary);padding:12px;border-radius:8px;margin-bottom:16px;">
+        <p style="font-size:12px;color:var(--text-secondary);margin:0 0 4px 0;"><strong>Student:</strong> <span id="signature-student-name">-</span></p>
+        <p style="font-size:12px;color:var(--text-secondary);margin:0 0 4px 0;"><strong>Class:</strong> <span id="signature-class-name">-</span></p>
+        <p style="font-size:11px;color:#888;margin:0;"><strong>Timestamp:</strong> <span id="signature-timestamp">-</span></p>
+      </div>
+      <div class="auth-field">
+        <label>Your Signature <span style="color:#888;font-size:11px;">(draw below)</span></label>
+        <canvas id="signature-canvas" width="440" height="150" style="width:100%;background:#fff;border:2px solid var(--border-color);border-radius:8px;cursor:crosshair;"></canvas>
+        <button class="btn btn-secondary" style="margin-top:8px;font-size:12px;padding:6px 12px;" onclick="window.clearSignature()">Clear Signature</button>
+      </div>
+      <p style="font-size:11px;color:#888;margin-top:12px;">By signing, you confirm your attendance for this class session. This data is stored securely for compliance purposes.</p>
+    </div>
+    <div class="modal-footer" style="display:flex;gap:8px;justify-content:space-between;">
+      <button class="btn btn-secondary" onclick="window.skipSignature()">Skip (Demo Mode)</button>
+      <button class="btn btn-primary" id="signature-submit-btn" onclick="window.submitSignature()">Submit & Join Class</button>
+    </div>
+  </div>
+</div>
+
 </div><!-- /app -->
 
 <div class="toast-container" id="toast-container"></div>

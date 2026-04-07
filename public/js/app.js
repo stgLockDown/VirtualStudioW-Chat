@@ -727,34 +727,6 @@ window.startRoom=function(id,type,name){
   goToLobby();
 };
 
-window.joinRoom=function(id,type,name){
-  S.roomId=id; S.roomType=type; S.roomName=name; S.isHost=false;
-  goToLobby();
-};
-
-async function goToLobby(){
-  S.userName = S.authUser ? S.authUser.name : ($('#user-name-input').value.trim()||'User');
-  S.userRole = S.authUser ? S.authUser.role : $('#user-role-select').value;
-  showPage('lobby-page');
-  $('#lobby-title').textContent=S.isHost?`Start: ${S.roomName}`:`Join: ${S.roomName}`;
-  $('#lobby-subtitle').textContent=`${S.roomType==='classroom'?'Classroom':'Meeting'} · ${S.roomId}`;
-  $('#lobby-avatar').textContent=initials(S.userName);
-  try{
-    const vidConstraints = S.basicMode ? {width:{ideal:320},height:{ideal:240},frameRate:{ideal:10,max:15}} : {width:{ideal:1280},height:{ideal:720}};
-    S.localStream=await navigator.mediaDevices.getUserMedia({video:vidConstraints,audio:{echoCancellation:true,noiseSuppression:true}});
-    $('#lobby-video').srcObject=S.localStream;
-    $('#lobby-video').style.display='block';
-    $('#lobby-placeholder').style.display='none';
-  }catch(e){
-    try{S.localStream=await navigator.mediaDevices.getUserMedia({audio:true});S.videoEnabled=false;}
-    catch(e2){S.localStream=new MediaStream();S.audioEnabled=false;S.videoEnabled=false;}
-    $('#lobby-video').style.display='none';
-    $('#lobby-placeholder').style.display='flex';
-    toast('⚠️ Camera not available','warning');
-  }
-  updateLobbyControls();
-}
-
 function updateLobbyControls(){
   $('#lobby-mic-btn').classList.toggle('off',!S.audioEnabled);
   $('#lobby-mic-btn').textContent=S.audioEnabled?'🎤':'🔇';
@@ -2350,6 +2322,7 @@ function isAdminRole() {
 function applyRoleVisibility() {
   const privileged = isPrivilegedRole();
   const admin = isAdminRole();
+  const isStudent = S.userRole === 'student';
 
   // Sidebar: hide admin section for students, hide roles for non-admin
   const adminSection = document.getElementById('sidebar-admin-section');
@@ -2361,11 +2334,21 @@ function applyRoleVisibility() {
     if (item.dataset.view === 'admin') {
       item.style.display = admin ? 'flex' : 'none';
     }
+    // Hide Meeting Rooms for students
+    if (item.dataset.view === 'meetings') {
+      item.style.display = isStudent ? 'none' : 'flex';
+    }
   });
 
   // If user is viewing a restricted view, redirect to overview
   if (!admin && (S.currentView === 'admin' || S.currentView === 'roles')) {
     S.currentView = 'overview';
+    loadDashboard();
+  }
+  
+  // If student is viewing meetings, redirect to classrooms
+  if (isStudent && S.currentView === 'meetings') {
+    S.currentView = 'classrooms';
     loadDashboard();
   }
 
@@ -2593,7 +2576,7 @@ async function refreshAssignmentLists(classroomId) {
     const allStudents = await studentsRes.json();
     const assignedIds = new Set((assigned || []).map(a => a.student_id));
 
-    const currentList = document.getElementById('current-assigned-list');
+    const currentList = document.getElementById('assign-current-list');
     if (currentList) {
       if (!assigned || assigned.length === 0) {
         currentList.innerHTML = '<p style="color:#999;font-size:0.85rem;">No students assigned yet</p>';
@@ -2607,11 +2590,11 @@ async function refreshAssignmentLists(classroomId) {
       }
     }
 
-    const unassignedList = document.getElementById('unassigned-students-list');
+    const unassignedList = document.getElementById('assign-students-list');
     if (unassignedList) {
       const unassigned = allStudents.filter(s => !assignedIds.has(s.id));
       if (unassigned.length === 0) {
-        unassignedList.innerHTML = '<p style="color:#999;font-size:0.85rem;">All students are assigned</p>';
+        unassignedList.innerHTML = '<p style="color:#999;font-size:0.85rem;">No students available to assign</p>';
       } else {
         unassignedList.innerHTML = unassigned.map(s =>
           '<div class="assign-student-row">' +
@@ -3285,9 +3268,242 @@ function initIntegrationListeners() {
   });
 }
 
-// ═══════════════════════════════════════════════════════════════════════
+
+// ────────────────────────────────────────────────────────────────────────────────
+//  STUDENT CHECK-IN FLOW — Reschedule popup and signature capture
+// ────────────────────────────────────────────────────────────────────────────────
+let signatureCanvas = null;
+let signatureCtx = null;
+let signatureDrawing = false;
+let pendingClassroomJoin = null;
+
+function initSignatureCanvas() {
+  signatureCanvas = document.getElementById('signature-canvas');
+  if (!signatureCanvas) return;
+  signatureCtx = signatureCanvas.getContext('2d');
+  signatureCtx.strokeStyle = '#333';
+  signatureCtx.lineWidth = 2;
+  signatureCtx.lineCap = 'round';
+  
+  // Clear canvas
+  signatureCtx.fillStyle = '#fff';
+  signatureCtx.fillRect(0, 0, signatureCanvas.width, signatureCanvas.height);
+  
+  // Mouse events
+  signatureCanvas.addEventListener('mousedown', startDrawing);
+  signatureCanvas.addEventListener('mousemove', draw);
+  signatureCanvas.addEventListener('mouseup', stopDrawing);
+  signatureCanvas.addEventListener('mouseout', stopDrawing);
+  
+  // Touch events
+  signatureCanvas.addEventListener('touchstart', handleTouchStart);
+  signatureCanvas.addEventListener('touchmove', handleTouchMove);
+  signatureCanvas.addEventListener('touchend', stopDrawing);
+}
+
+function startDrawing(e) {
+  signatureDrawing = true;
+  signatureCtx.beginPath();
+  signatureCtx.moveTo(e.offsetX, e.offsetY);
+}
+
+function draw(e) {
+  if (!signatureDrawing) return;
+  signatureCtx.lineTo(e.offsetX, e.offsetY);
+  signatureCtx.stroke();
+}
+
+function stopDrawing() {
+  signatureDrawing = false;
+}
+
+function handleTouchStart(e) {
+  e.preventDefault();
+  const touch = e.touches[0];
+  const rect = signatureCanvas.getBoundingClientRect();
+  const x = touch.clientX - rect.left;
+  const y = touch.clientY - rect.top;
+  signatureDrawing = true;
+  signatureCtx.beginPath();
+  signatureCtx.moveTo(x, y);
+}
+
+function handleTouchMove(e) {
+  if (!signatureDrawing) return;
+  e.preventDefault();
+  const touch = e.touches[0];
+  const rect = signatureCanvas.getBoundingClientRect();
+  const x = touch.clientX - rect.left;
+  const y = touch.clientY - rect.top;
+  signatureCtx.lineTo(x, y);
+  signatureCtx.stroke();
+}
+
+function clearSignature() {
+  if (!signatureCtx || !signatureCanvas) return;
+  signatureCtx.fillStyle = '#fff';
+  signatureCtx.fillRect(0, 0, signatureCanvas.width, signatureCanvas.height);
+}
+window.clearSignature = clearSignature;
+
+function isSignatureEmpty() {
+  if (!signatureCtx || !signatureCanvas) return true;
+  const imageData = signatureCtx.getImageData(0, 0, signatureCanvas.width, signatureCanvas.height);
+  const data = imageData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i] < 250 || data[i + 1] < 250 || data[i + 2] < 250) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function formatDateTime(date) {
+  return date.toLocaleString('en-US', {
+    weekday: 'short',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZoneName: 'short'
+  });
+}
+
+function showStudentRescheduleModal(classroomName) {
+  const now = new Date();
+  document.getElementById('reschedule-class-name').textContent = classroomName || 'Class';
+  document.getElementById('reschedule-datetime').textContent = formatDateTime(now);
+  document.getElementById('reschedule-timestamp').textContent = now.toISOString();
+  
+  const oneWeekLater = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const timeInput = document.getElementById('reschedule-preferred-time');
+  timeInput.value = oneWeekLater.toISOString().slice(0, 16);
+  
+  openModal('student-reschedule-modal');
+}
+
+window.skipReschedule = function() {
+  closeModal('student-reschedule-modal');
+  showStudentSignatureModal();
+};
+
+window.confirmAttendance = function() {
+  const preferredTime = document.getElementById('reschedule-preferred-time').value;
+  const reason = document.getElementById('reschedule-reason').value;
+  
+  if (preferredTime || reason) {
+    console.log('[GameU] Reschedule request captured:', {
+      classroom: pendingClassroomJoin?.name,
+      preferredTime,
+      reason,
+      timestamp: new Date().toISOString(),
+      studentId: S.authUser?.id,
+      studentName: S.userName
+    });
+    toast('Reschedule request noted', 'info');
+  }
+  
+  closeModal('student-reschedule-modal');
+  showStudentSignatureModal();
+};
+
+function showStudentSignatureModal() {
+  const now = new Date();
+  document.getElementById('signature-student-name').textContent = S.userName || 'Student';
+  document.getElementById('signature-class-name').textContent = pendingClassroomJoin?.name || 'Class';
+  document.getElementById('signature-timestamp').textContent = now.toISOString();
+  
+  openModal('student-signature-modal');
+  setTimeout(initSignatureCanvas, 100);
+}
+
+window.skipSignature = function() {
+  closeModal('student-signature-modal');
+  proceedToLobby();
+};
+
+window.submitSignature = function() {
+  if (isSignatureEmpty()) {
+    toast('Please sign before submitting', 'warning');
+    return;
+  }
+  
+  const signatureData = signatureCanvas.toDataURL('image/png');
+  const now = new Date();
+  
+  console.log('[GameU] Signature captured:', {
+    classroom: pendingClassroomJoin?.name,
+    classroomId: pendingClassroomJoin?.id,
+    studentId: S.authUser?.id,
+    studentName: S.userName,
+    timestamp: now.toISOString()
+  });
+  
+  const checkInRecord = {
+    type: 'student-checkin',
+    classroomId: pendingClassroomJoin?.id,
+    classroomName: pendingClassroomJoin?.name,
+    studentId: S.authUser?.id,
+    studentName: S.userName,
+    signatureData,
+    timestamp: now.toISOString(),
+    localTime: formatDateTime(now)
+  };
+  
+  const checkIns = JSON.parse(localStorage.getItem('gameu_checkins') || '[]');
+  checkIns.push(checkInRecord);
+  localStorage.setItem('gameu_checkins', JSON.stringify(checkIns));
+  
+  toast('✅ Signed in successfully!', 'success');
+  closeModal('student-signature-modal');
+  proceedToLobby();
+};
+
+function proceedToLobby() {
+  goToLobbyInternal();
+}
+
+window.joinRoom = function(id, type, name) {
+  S.roomId = id;
+  S.roomType = type;
+  S.roomName = name;
+  S.isHost = false;
+  
+  if (S.userRole === 'student' && type === 'classroom') {
+    pendingClassroomJoin = { id, type, name };
+    showStudentRescheduleModal(name);
+  } else {
+    goToLobbyInternal();
+  }
+};
+
+async function goToLobbyInternal() {
+  S.userName = S.authUser ? S.authUser.name : ($('#user-name-input').value.trim()||'User');
+  S.userRole = S.authUser ? S.authUser.role : $('#user-role-select').value;
+  showPage('lobby-page');
+  $('#lobby-title').textContent=S.isHost?`Start: ${S.roomName}`:`Join: ${S.roomName}`;
+  $('#lobby-subtitle').textContent=`${S.roomType==='classroom'?'Classroom':'Meeting'} · ${S.roomId}`;
+  $('#lobby-avatar').textContent=initials(S.userName);
+  try{
+    const vidConstraints = S.basicMode ? {width:{ideal:320},height:{ideal:240},frameRate:{ideal:10,max:15}} : {width:{ideal:1280},height:{ideal:720}};
+    S.localStream=await navigator.mediaDevices.getUserMedia({video:vidConstraints,audio:{echoCancellation:true,noiseSuppression:true}});
+    $('#lobby-video').srcObject=S.localStream;
+    $('#lobby-video').style.display='block';
+    $('#lobby-placeholder').style.display='none';
+  }catch(e){
+    try{S.localStream=await navigator.mediaDevices.getUserMedia({audio:true});S.videoEnabled=false;}
+    catch(e2){S.localStream=new MediaStream();S.audioEnabled=false;S.videoEnabled=false;}
+    $('#lobby-video').style.display='none';
+    $('#lobby-placeholder').style.display='flex';
+    toast('⚠️ Camera not available','warning');
+  }
+  updateLobbyControls();
+}
+
+// ────────────────────────────────────────────────────────────────────────────────
 //  STARTUP — Check auth then init
-// ═══════════════════════════════════════════════════════════════════════
+// ────────────────────────────────────────────────────────────────────────────────
 (async function startup() {
   init();
   const loggedIn = await tryAutoLogin();
