@@ -2330,24 +2330,30 @@ function applyRoleVisibility() {
   const rolesNav = document.getElementById('nav-roles');
   if (rolesNav) rolesNav.style.display = admin ? 'flex' : 'none';
 
+  // Views that students cannot see
+  const studentRestrictedViews = ['overview', 'meetings', 'recordings', 'summaries'];
+  
   $$('.sidebar-item[data-view]').forEach(item => {
-    if (item.dataset.view === 'admin') {
+    const view = item.dataset.view;
+    
+    // Hide admin for non-admins
+    if (view === 'admin') {
       item.style.display = admin ? 'flex' : 'none';
     }
-    // Hide Meeting Rooms for students
-    if (item.dataset.view === 'meetings') {
+    // Hide restricted views for students
+    else if (studentRestrictedViews.includes(view)) {
       item.style.display = isStudent ? 'none' : 'flex';
     }
   });
 
-  // If user is viewing a restricted view, redirect to overview
+  // If user is viewing a restricted view, redirect appropriately
   if (!admin && (S.currentView === 'admin' || S.currentView === 'roles')) {
-    S.currentView = 'overview';
+    S.currentView = isStudent ? 'classrooms' : 'overview';
     loadDashboard();
   }
   
-  // If student is viewing meetings, redirect to classrooms
-  if (isStudent && S.currentView === 'meetings') {
+  // If student is viewing a restricted view, redirect to classrooms
+  if (isStudent && studentRestrictedViews.includes(S.currentView)) {
     S.currentView = 'classrooms';
     loadDashboard();
   }
