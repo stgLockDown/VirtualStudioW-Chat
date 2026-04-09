@@ -137,6 +137,160 @@ const upload = multer({
 // ─── In-Memory Live State ───────────────────────────────────────────
 const liveRooms = new Map();
 const socketToUser = new Map();
+
+// ──────────────────────────── Student Attendance Tracking (Medicaid Compliance) ────────────────────────────
+const activeAttendance = new Map(); // Track active attendance sessions: socketId -> attendance record
+
+/**
+ * Record when a student joins a room
+ */
+async function recordStudentJoin(socketId, { userId, userName, roomId, roomName, roomType, instructorId, instructorName }) {
+  try {
+    const attendanceId = `${roomId}-${userId}-${Date.now()}`;
+    const now = Date.now();
+    const sessionDate = new Date(now).toISOString().split('T')[0]; // YYYY-MM-DD format
+    
+    const attendanceRecord = {
+      id: attendanceId,
+      student_id: userId,
+      student_name: userName,
+      room_id: roomId,
+      room_name: roomName,
+      room_type: roomType || 'classroom',
+      instructor_id: instructorId,
+      instructor_name: instructorName,
+      joined_at: now,
+      left_at: null,
+      duration_seconds: 0,
+      session_date: sessionDate
+    };
+    
+    // Store in memory for quick access when they leave
+    activeAttendance.set(socketId, attendanceRecord);
+    
+    // Insert into database
+    await db.run(
+      `INSERT INTO student_attendance (id, student_id, student_name, room_id, room_name, room_type, instructor_id, instructor_name, joined_at, session_date) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [attendanceId, userId, userName, roomId, roomName, roomType || 'classroom', instructorId, instructorName, now, sessionDate]
+    );
+    
+    console.log(`[Attendance] Student ${userName} (${userId}) joined room ${roomId} at ${new Date(now).toISOString()}`);
+    return attendanceRecord;
+  } catch (error) {
+    console.error('[Attendance] Error recording student join:', error);
+    return null;
+  }
+}
+
+/**
+ * Record when a student leaves a room
+ */
+async function recordStudentLeave(socketId) {
+  try {
+    const attendanceRecord = activeAttendance.get(socketId);
+    if (!attendanceRecord) {
+      return null; // Not a student or already recorded
+    }
+    
+    const now = Date.now();
+    const durationSeconds = Math.floor((now - attendanceRecord.joined_at) / 1000);
+    
+    // Update in database
+    await db.run(
+      `UPDATE student_attendance SET left_at = $1, duration_seconds = $2 WHERE id = $3`,
+      [now, durationSeconds, attendanceRecord.id]
+    );
+    
+    // Remove from active tracking
+    activeAttendance.delete(socketId);
+    
+    console.log(`[Attendance] Student ${attendanceRecord.student_name} left room ${attendanceRecord.room_id} after ${durationSeconds} seconds`);
+    return { ...attendanceRecord, left_at: now, duration_seconds: durationSeconds };
+  } catch (error) {
+    console.error('[Attendance] Error recording student leave:', error);
+    return null;
+  }
+}
+
+/**
+ * Get attendance records for a specific room
+ */
+async function getRoomAttendance(roomId) {
+  try {
+    const records = await db.getAll(
+      `SELECT * FROM student_attendance WHERE room_id = $1 ORDER BY joined_at DESC`,
+      [roomId]
+    );
+    return records;
+  } catch (error) {
+    console.error('[Attendance] Error getting room attendance:', error);
+    return [];
+  }
+}
+
+/**
+ * Get attendance records for a specific student
+ */
+async function getStudentAttendance(studentId, startDate = null, endDate = null) {
+  try {
+    let query = `SELECT * FROM student_attendance WHERE student_id = $1`;
+    const params = [studentId];
+    
+    if (startDate) {
+      query += ` AND session_date >= $${params.length + 1}`;
+      params.push(startDate);
+    }
+    if (endDate) {
+      query += ` AND session_date <= $${params.length + 1}`;
+      params.push(endDate);
+    }
+    
+    query += ` ORDER BY joined_at DESC`;
+    
+    const records = await db.getAll(query, params);
+    return records;
+  } catch (error) {
+    console.error('[Attendance] Error getting student attendance:', error);
+    return [];
+  }
+}
+
+/**
+ * Get all attendance records for a date range (admin view)
+ */
+async function getAllAttendance(startDate = null, endDate = null, roomId = null, instructorId = null) {
+  try {
+    let query = `SELECT * FROM student_attendance WHERE 1=1`;
+    const params = [];
+    
+    if (startDate) {
+      params.push(startDate);
+      query += ` AND session_date >= $${params.length}`;
+    }
+    if (endDate) {
+      params.push(endDate);
+      query += ` AND session_date <= $${params.length}`;
+    }
+    if (roomId) {
+      params.push(roomId);
+      query += ` AND room_id = $${params.length}`;
+    }
+    if (instructorId) {
+      params.push(instructorId);
+      query += ` AND instructor_id = $${params.length}`;
+    }
+    
+    query += ` ORDER BY joined_at DESC LIMIT 1000`;
+    
+    const records = await db.getAll(query, params);
+    return records;
+  } catch (error) {
+    console.error('[Attendance] Error getting all attendance:', error);
+    return [];
+  }
+}
+
 const waitingArea = new Map();
 
 async function getRoomTheme(id, type) {
@@ -1102,6 +1256,135 @@ app.get('/api/live-rooms', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STUDENT ATTENDANCE API (Medicaid Compliance)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Get attendance records for a specific room
+app.get('/api/attendance/room/:roomId', authMiddleware, requireRole('admin'), async (req, res) => {
+  try {
+    const records = await getRoomAttendance(req.params.roomId);
+    res.json(records);
+  } catch (e) {
+    console.error('Error getting room attendance:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get attendance records for a specific student
+app.get('/api/attendance/student/:studentId', authMiddleware, async (req, res) => {
+  try {
+    // Users can view their own attendance, admins can view anyone's
+    const isOwn = req.user.id === req.params.studentId;
+    const isAdmin = ['admin', 'owner', 'developer'].includes(req.user.role);
+    
+    if (!isOwn && !isAdmin) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    
+    const { startDate, endDate } = req.query;
+    const records = await getStudentAttendance(req.params.studentId, startDate, endDate);
+    res.json(records);
+  } catch (e) {
+    console.error('Error getting student attendance:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get all attendance records (admin only) with filtering
+app.get('/api/attendance', authMiddleware, requireRole('admin'), async (req, res) => {
+  try {
+    const { startDate, endDate, roomId, instructorId } = req.query;
+    const records = await getAllAttendance(startDate, endDate, roomId, instructorId);
+    res.json(records);
+  } catch (e) {
+    console.error('Error getting all attendance:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get attendance summary statistics
+app.get('/api/attendance/summary', authMiddleware, requireRole('admin'), async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    
+    // Get total sessions
+    const totalQuery = await db.getOne(
+      `SELECT COUNT(DISTINCT room_id) as total_rooms, 
+              COUNT(*) as total_sessions,
+              COUNT(DISTINCT student_id) as unique_students,
+              SUM(duration_seconds) as total_duration
+       FROM student_attendance 
+       WHERE ($1::text IS NULL OR session_date >= $1) 
+         AND ($2::text IS NULL OR session_date <= $2)`,
+      [startDate || null, endDate || null]
+    );
+    
+    // Get daily breakdown
+    const dailyQuery = await db.getAll(
+      `SELECT session_date, 
+              COUNT(*) as sessions,
+              COUNT(DISTINCT student_id) as students,
+              SUM(duration_seconds) as total_duration
+       FROM student_attendance 
+       WHERE ($1::text IS NULL OR session_date >= $1) 
+         AND ($2::text IS NULL OR session_date <= $2)
+       GROUP BY session_date
+       ORDER BY session_date DESC
+       LIMIT 30`,
+      [startDate || null, endDate || null]
+    );
+    
+    res.json({
+      summary: totalQuery || { total_rooms: 0, total_sessions: 0, unique_students: 0, total_duration: 0 },
+      daily: dailyQuery || []
+    });
+  } catch (e) {
+    console.error('Error getting attendance summary:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Export attendance records as CSV (for Medicaid reporting)
+app.get('/api/attendance/export', authMiddleware, requireRole('admin'), async (req, res) => {
+  try {
+    const { startDate, endDate, roomId } = req.query;
+    const records = await getAllAttendance(startDate, endDate, roomId);
+    
+    // Generate CSV
+    const headers = ['Student ID', 'Student Name', 'Room ID', 'Room Name', 'Room Type', 'Instructor Name', 'Joined At', 'Left At', 'Duration (seconds)', 'Session Date'];
+    const csvRows = [headers.join(',')];
+    
+    for (const record of records) {
+      const row = [
+        record.student_id,
+        `"${(record.student_name || '').replace(/"/g, '""')}"`,
+        record.room_id,
+        `"${(record.room_name || '').replace(/"/g, '""')}"`,
+        record.room_type,
+        `"${(record.instructor_name || '').replace(/"/g, '""')}"`,
+        record.joined_at ? new Date(record.joined_at).toISOString() : '',
+        record.left_at ? new Date(record.left_at).toISOString() : '',
+        record.duration_seconds || 0,
+        record.session_date || ''
+      ];
+      csvRows.push(row.join(','));
+    }
+    
+    const csv = csvRows.join('
+');
+    const filename = `attendance_${startDate || 'all'}_${endDate || 'all'}.csv`;
+    
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
+  } catch (e) {
+    console.error('Error exporting attendance:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // SPA fallback
 app.get('/{*splat}', (req, res) => { res.sendFile(path.join(__dirname, '..', 'public', 'index.html')); });
 
@@ -1207,6 +1490,21 @@ io.on('connection', (socket) => {
       socket.join(roomId);
       socket.to(roomId).emit('user-joined', { userId: socket.id, userName, userRole: role, audioEnabled: participant.audioEnabled, videoEnabled: participant.videoEnabled });
       io.to(roomId).emit('participants-update', { participants: getParticipantList(room) });
+      
+      // Track student attendance for Medicaid compliance
+      if (role === 'student') {
+        const hostInfo = room.participants.get(room.hostId);
+        await recordStudentJoin(socket.id, {
+          userId: existJoin?.id || socket.id,
+          userName: userName,
+          roomId: roomId,
+          roomName: room.name,
+          roomType: room.type,
+          instructorId: room.hostId ? (hostInfo?.id || room.hostId) : null,
+          instructorName: hostInfo?.name || room.hostName
+        });
+      }
+      
       await updateLiveRoomInDB(room);
       callback({ success: true, waiting: false, roomId, meetingName: room.name, participants: getParticipantList(room), settings: room.settings, chatHistory: room.chatMessages.slice(-200), isRecording: room.isRecording, muteOnEntry: room.settings.muteOnEntry, transcript: room.activeTranscript.slice(-100), theme: room.theme });
     } catch(e) { console.error('join-room error:', e.message); callback({ success: false, error: e.message }); }
@@ -1241,6 +1539,22 @@ io.on('connection', (socket) => {
     socket.to(user.roomId).emit('user-joined', { userId: participantId, userName: waiting.name, userRole: waiting.role, audioEnabled: participant.audioEnabled, videoEnabled: participant.videoEnabled });
     io.to(user.roomId).emit('participants-update', { participants: getParticipantList(room) });
     emitWaitingRoomUpdate(room, user.roomId);
+    
+    // Track student attendance for Medicaid compliance
+    if (waiting.role === 'student') {
+      const hostInfo = room.participants.get(room.hostId);
+      const waitingUser = socketToUser.get(participantId);
+      recordStudentJoin(participantId, {
+        userId: waitingUser?.id || participantId,
+        userName: waiting.name,
+        roomId: user.roomId,
+        roomName: room.name,
+        roomType: room.type,
+        instructorId: room.hostId ? (hostInfo?.id || room.hostId) : null,
+        instructorName: hostInfo?.name || room.hostName
+      });
+    }
+    
     updateLiveRoomInDB(room);
     console.log('[Admit] Participant admitted successfully');
   });
@@ -1533,6 +1847,12 @@ async function handleLeave(socket) {
   room.waitingList.delete(socket.id);
   const participant = room.participants.get(socket.id);
   if (participant) {
+    // Record student leave time for Medicaid compliance
+    const attendanceRecord = await recordStudentLeave(socket.id);
+    if (attendanceRecord) {
+      console.log(`[Attendance] Recorded leave for ${attendanceRecord.student_name}`);
+    }
+    
     room.participants.delete(socket.id);
     socket.to(user.roomId).emit('user-left', { userId: socket.id, userName: user.name });
     io.to(user.roomId).emit('participants-update', { participants: getParticipantList(room) });

@@ -411,6 +411,29 @@ async function initSchemaPostgres(client) {
     CREATE INDEX IF NOT EXISTS idx_classroom_assignments_student ON classroom_assignments(student_id);
     CREATE INDEX IF NOT EXISTS idx_classroom_assignments_classroom ON classroom_assignments(classroom_id);
 
+    /* ──────────────────────────── Student Attendance Table (Medicaid Compliance) ──────────────────────────── */
+    CREATE TABLE IF NOT EXISTS student_attendance (
+      id TEXT PRIMARY KEY,
+      student_id TEXT NOT NULL,
+      student_name TEXT NOT NULL,
+      room_id TEXT NOT NULL,
+      room_name TEXT,
+      room_type TEXT DEFAULT 'classroom',
+      instructor_id TEXT,
+      instructor_name TEXT,
+      joined_at BIGINT NOT NULL,
+      left_at BIGINT,
+      duration_seconds INTEGER DEFAULT 0,
+      session_date TEXT,
+      created_at BIGINT DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_student_attendance_student ON student_attendance(student_id);
+    CREATE INDEX IF NOT EXISTS idx_student_attendance_room ON student_attendance(room_id);
+    CREATE INDEX IF NOT EXISTS idx_student_attendance_date ON student_attendance(session_date);
+    CREATE INDEX IF NOT EXISTS idx_student_attendance_instructor ON student_attendance(instructor_id);
+
+
     /* ═══════════ Chat System Tables ═══════════ */
     CREATE TABLE IF NOT EXISTS chat_channels (
       id TEXT PRIMARY KEY,
@@ -736,6 +759,29 @@ function initSchemaSQLite(db) {
       last_read_at INTEGER DEFAULT 0,
       UNIQUE(channel_id, user_id)
     );
+
+    /* ──────────────────────────── Student Attendance Table (Medicaid Compliance) ──────────────────────────── */
+    CREATE TABLE IF NOT EXISTS student_attendance (
+      id TEXT PRIMARY KEY,
+      student_id TEXT NOT NULL,
+      student_name TEXT NOT NULL,
+      room_id TEXT NOT NULL,
+      room_name TEXT,
+      room_type TEXT DEFAULT 'classroom',
+      instructor_id TEXT,
+      instructor_name TEXT,
+      joined_at INTEGER NOT NULL,
+      left_at INTEGER,
+      duration_seconds INTEGER DEFAULT 0,
+      session_date TEXT,
+      created_at INTEGER DEFAULT (strftime('%s','now') * 1000)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_student_attendance_student ON student_attendance(student_id);
+    CREATE INDEX IF NOT EXISTS idx_student_attendance_room ON student_attendance(room_id);
+    CREATE INDEX IF NOT EXISTS idx_student_attendance_date ON student_attendance(session_date);
+    CREATE INDEX IF NOT EXISTS idx_student_attendance_instructor ON student_attendance(instructor_id);
+
 
     CREATE TABLE IF NOT EXISTS chat_messages (
       id TEXT PRIMARY KEY,

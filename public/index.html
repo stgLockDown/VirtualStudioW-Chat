@@ -95,6 +95,7 @@
       <div class="sidebar-section" id="sidebar-admin-section">
         <div class="sidebar-section-title">Admin</div>
         <div class="sidebar-item" data-view="admin"><span class="icon">⚙️</span> Admin Panel</div>
+        <div class="sidebar-item" data-view="attendance" id="nav-attendance"><span class="icon">📋</span> Attendance Records</div>
         <div class="sidebar-item" data-view="roles" id="nav-roles"><span class="icon">👥</span> User Roles</div>
       </div>
     </nav>
@@ -136,6 +137,84 @@
 </div>
 
 <!-- ═══════════════ LOBBY ═══════════════ -->
+<!-- ═════════════════════════════ ATTENDANCE RECORDS ═════════════════════════════ -->
+<div id="attendance-page" class="page dashboard-page">
+  <div class="dashboard-header">
+    <h1 class="dashboard-title">📋 Attendance Records</h1>
+    <p class="dashboard-subtitle">Student attendance tracking for Medicaid compliance</p>
+  </div>
+  <div class="attendance-dashboard">
+    <div class="attendance-controls">
+      <div class="date-filters">
+        <label>From: <input type="date" id="attendance-start-date"></label>
+        <label>To: <input type="date" id="attendance-end-date"></label>
+        <button class="btn btn-primary" id="apply-attendance-filter">🔍 Apply Filter</button>
+        <button class="btn btn-secondary" id="clear-attendance-filter">✖ Clear</button>
+      </div>
+      <div class="export-actions">
+        <button class="btn btn-success" id="export-attendance-csv">📥 Export CSV</button>
+      </div>
+    </div>
+    
+    <div class="attendance-stats" id="attendance-stats">
+      <div class="stat-card">
+        <div class="stat-icon">📚</div>
+        <div class="stat-value" id="total-sessions">0</div>
+        <div class="stat-label">Total Sessions</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">👥</div>
+        <div class="stat-value" id="unique-students">0</div>
+        <div class="stat-label">Unique Students</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">🏠</div>
+        <div class="stat-value" id="total-rooms">0</div>
+        <div class="stat-label">Rooms Used</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">⏱️</div>
+        <div class="stat-value" id="total-duration">0h</div>
+        <div class="stat-label">Total Time</div>
+      </div>
+    </div>
+    
+    <div class="attendance-tabs">
+      <button class="tab-btn active" data-tab="records">📋 Records</button>
+      <button class="tab-btn" data-tab="daily">📅 Daily Summary</button>
+    </div>
+    
+    <div class="attendance-content" id="attendance-content">
+      <div id="tab-records" class="tab-content active">
+        <div class="attendance-table-container">
+          <table class="attendance-table" id="attendance-table">
+            <thead>
+              <tr>
+                <th>Student Name</th>
+                <th>Room</th>
+                <th>Instructor</th>
+                <th>Joined</th>
+                <th>Left</th>
+                <th>Duration</th>
+                <th>Date</th>
+              </tr>
+            </thead>
+            <tbody id="attendance-tbody">
+              <tr><td colspan="7" class="loading">Loading attendance records...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      
+      <div id="tab-daily" class="tab-content" style="display:none;">
+        <div class="daily-summary" id="daily-summary">
+          <div class="loading">Loading daily summary...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="lobby-page" class="page lobby-page">
   <div class="lobby-container">
     <div>

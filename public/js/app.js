@@ -104,7 +104,7 @@ function fmtSize(b){if(!b)return'0 B';if(b<1024)return b+' B';if(b<1048576)retur
 // ═══════════════════════════════════════════════════════════════════
 async function loadDashboard() {
   const view = S.currentView;
-  $('#dashboard-title').textContent = {overview:'Overview',classrooms:'Classrooms',meetings:'Meeting Rooms',recordings:'Recordings',summaries:'Meeting Summaries',admin:'Admin Panel',roles:'User Roles'}[view]||'Overview';
+  $('#dashboard-title').textContent = {overview:'Overview',classrooms:'Classrooms',meetings:'Meeting Rooms',recordings:'Recordings',summaries:'Meeting Summaries',admin:'Admin Panel',roles:'User Roles',attendance:'Attendance Records'}[view]||'Overview';
   $$('.sidebar-item').forEach(i=>{i.classList.toggle('active',i.dataset.view===view);});
   const c=$('#dashboard-content');
 
@@ -115,6 +115,7 @@ async function loadDashboard() {
   else if(view==='summaries') await renderSummaries(c);
   else if(view==='admin') await renderAdmin(c);
   else if(view==='roles') await renderRoles(c);
+  else if(view==='attendance') { showPage('attendance-page'); loadAttendanceDashboard(); return; }
 }
 
 async function renderOverview(c) {
@@ -2340,6 +2341,10 @@ function applyRoleVisibility() {
     if (view === 'admin') {
       item.style.display = admin ? 'flex' : 'none';
     }
+    // Hide attendance for non-admins (admin only for Medicaid compliance)
+    else if (view === 'attendance') {
+      item.style.display = admin ? 'flex' : 'none';
+    }
     // Hide restricted views for students
     else if (studentRestrictedViews.includes(view)) {
       item.style.display = isStudent ? 'none' : 'flex';
@@ -3508,6 +3513,192 @@ async function goToLobbyInternal() {
 }
 
 // ────────────────────────────────────────────────────────────────────────────────
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ATTENDANCE RECORDS FUNCTIONS (Medicaid Compliance)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let attendanceData = [];
+let attendanceSummary = {};
+
+async function loadAttendanceDashboard() {
+  const startDate = document.getElementById('attendance-start-date')?.value || '';
+  const endDate = document.getElementById('attendance-end-date')?.value || '';
+  
+  try {
+    // Load attendance records
+    const recordsUrl = `/api/attendance?startDate=${startDate}&endDate=${endDate}`;
+    const recordsRes = await fetch(recordsUrl, { headers: getAuthHeaders() });
+    if (recordsRes.ok) {
+      attendanceData = await recordsRes.json();
+      renderAttendanceTable(attendanceData);
+    }
+    
+    // Load summary stats
+    const summaryUrl = `/api/attendance/summary?startDate=${startDate}&endDate=${endDate}`;
+    const summaryRes = await fetch(summaryUrl, { headers: getAuthHeaders() });
+    if (summaryRes.ok) {
+      attendanceSummary = await summaryRes.json();
+      renderAttendanceSummary(attendanceSummary);
+    }
+  } catch (error) {
+    console.error('Error loading attendance:', error);
+    document.getElementById('attendance-tbody').innerHTML = '<tr><td colspan="7" class="error">Failed to load attendance records</td></tr>';
+  }
+}
+
+function renderAttendanceTable(records) {
+  const tbody = document.getElementById('attendance-tbody');
+  if (!tbody) return;
+  
+  if (!records || records.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No attendance records found</td></tr>';
+    return;
+  }
+  
+  tbody.innerHTML = records.map(record => {
+    const joinedAt = record.joined_at ? new Date(record.joined_at) : null;
+    const leftAt = record.left_at ? new Date(record.left_at) : null;
+    const duration = formatDuration(record.duration_seconds);
+    
+    return `
+      <tr>
+        <td>${escapeHtml(record.student_name || 'Unknown')}</td>
+        <td>${escapeHtml(record.room_name || record.room_id)}</td>
+        <td>${escapeHtml(record.instructor_name || '-')}</td>
+        <td>${joinedAt ? joinedAt.toLocaleTimeString() : '-'}</td>
+        <td>${leftAt ? leftAt.toLocaleTimeString() : '<span class="active-badge">In Session</span>'}</td>
+        <td>${duration}</td>
+        <td>${record.session_date || '-'}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function renderAttendanceSummary(summary) {
+  document.getElementById('total-sessions').textContent = summary.summary?.total_sessions || 0;
+  document.getElementById('unique-students').textContent = summary.summary?.unique_students || 0;
+  document.getElementById('total-rooms').textContent = summary.summary?.total_rooms || 0;
+  
+  const totalSeconds = summary.summary?.total_duration || 0;
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  document.getElementById('total-duration').textContent = `${hours}h ${minutes}m`;
+  
+  // Render daily summary if available
+  const dailyContainer = document.getElementById('daily-summary');
+  if (dailyContainer && summary.daily && summary.daily.length > 0) {
+    dailyContainer.innerHTML = `
+      <table class="attendance-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Sessions</th>
+            <th>Students</th>
+            <th>Total Duration</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${summary.daily.map(day => {
+            const seconds = day.total_duration || 0;
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            return `
+              <tr>
+                <td>${day.session_date}</td>
+                <td>${day.sessions}</td>
+                <td>${day.students}</td>
+                <td>${h}h ${m}m</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  } else {
+    if (dailyContainer) dailyContainer.innerHTML = '<div class="empty">No daily data available</div>';
+  }
+}
+
+function formatDuration(seconds) {
+  if (!seconds) return '-';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>').replace(/"/g, '"');
+}
+
+// Attendance event listeners
+document.addEventListener('DOMContentLoaded', () => {
+  const applyBtn = document.getElementById('apply-attendance-filter');
+  const clearBtn = document.getElementById('clear-attendance-filter');
+  const exportBtn = document.getElementById('export-attendance-csv');
+  const tabBtns = document.querySelectorAll('.attendance-tabs .tab-btn');
+  
+  if (applyBtn) {
+    applyBtn.addEventListener('click', loadAttendanceDashboard);
+  }
+  
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      document.getElementById('attendance-start-date').value = '';
+      document.getElementById('attendance-end-date').value = '';
+      loadAttendanceDashboard();
+    });
+  }
+  
+  if (exportBtn) {
+    exportBtn.addEventListener('click', exportAttendanceCSV);
+  }
+  
+  tabBtns.forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      tabBtns.forEach(b => b.classList.remove('active'));
+      e.target.classList.add('active');
+      
+      const tab = e.target.dataset.tab;
+      document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
+      document.getElementById(`tab-${tab}`).style.display = 'block';
+    });
+  });
+});
+
+async function exportAttendanceCSV() {
+  const startDate = document.getElementById('attendance-start-date')?.value || '';
+  const endDate = document.getElementById('attendance-end-date')?.value || '';
+  
+  try {
+    const url = `/api/attendance/export?startDate=${startDate}&endDate=${endDate}`;
+    const response = await fetch(url, { headers: getAuthHeaders() });
+    
+    if (response.ok) {
+      const blob = await response.blob();
+      const downloadUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = `attendance_${startDate || 'all'}_${endDate || 'all'}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(downloadUrl);
+      toast('Attendance exported successfully', 'success');
+    } else {
+      toast('Failed to export attendance', 'error');
+    }
+  } catch (error) {
+    console.error('Export error:', error);
+    toast('Failed to export attendance', 'error');
+  }
+}
+
+
 //  STARTUP — Check auth then init
 // ────────────────────────────────────────────────────────────────────────────────
 (async function startup() {
