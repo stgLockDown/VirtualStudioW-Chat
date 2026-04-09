@@ -425,6 +425,10 @@ async function initSchemaPostgres(client) {
       left_at BIGINT,
       duration_seconds INTEGER DEFAULT 0,
       session_date TEXT,
+      session_id TEXT,
+      transcript_snapshot TEXT,
+      screenshots_count INTEGER DEFAULT 0,
+      screen_share_duration INTEGER DEFAULT 0,
       created_at BIGINT DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
     );
 
@@ -432,6 +436,26 @@ async function initSchemaPostgres(client) {
     CREATE INDEX IF NOT EXISTS idx_student_attendance_room ON student_attendance(room_id);
     CREATE INDEX IF NOT EXISTS idx_student_attendance_date ON student_attendance(session_date);
     CREATE INDEX IF NOT EXISTS idx_student_attendance_instructor ON student_attendance(instructor_id);
+
+    CREATE TABLE IF NOT EXISTS session_assets (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      attendance_id TEXT NOT NULL,
+      room_id TEXT NOT NULL,
+      student_id TEXT NOT NULL,
+      asset_type TEXT NOT NULL,
+      file_path TEXT,
+      file_data TEXT,
+      thumbnail_data TEXT,
+      captured_at BIGINT NOT NULL,
+      metadata TEXT DEFAULT '{}',
+      created_at BIGINT DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_session_assets_session ON session_assets(session_id);
+    CREATE INDEX IF NOT EXISTS idx_session_assets_attendance ON session_assets(attendance_id);
+    CREATE INDEX IF NOT EXISTS idx_session_assets_student ON session_assets(student_id);
+    CREATE INDEX IF NOT EXISTS idx_session_assets_type ON session_assets(asset_type);
 
 
     /* ═══════════ Chat System Tables ═══════════ */
@@ -774,6 +798,10 @@ function initSchemaSQLite(db) {
       left_at INTEGER,
       duration_seconds INTEGER DEFAULT 0,
       session_date TEXT,
+      session_id TEXT,
+      transcript_snapshot TEXT,
+      screenshots_count INTEGER DEFAULT 0,
+      screen_share_duration INTEGER DEFAULT 0,
       created_at INTEGER DEFAULT (strftime('%s','now') * 1000)
     );
 
@@ -781,6 +809,26 @@ function initSchemaSQLite(db) {
     CREATE INDEX IF NOT EXISTS idx_student_attendance_room ON student_attendance(room_id);
     CREATE INDEX IF NOT EXISTS idx_student_attendance_date ON student_attendance(session_date);
     CREATE INDEX IF NOT EXISTS idx_student_attendance_instructor ON student_attendance(instructor_id);
+
+    CREATE TABLE IF NOT EXISTS session_assets (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      attendance_id TEXT NOT NULL,
+      room_id TEXT NOT NULL,
+      student_id TEXT NOT NULL,
+      asset_type TEXT NOT NULL,
+      file_path TEXT,
+      file_data TEXT,
+      thumbnail_data TEXT,
+      captured_at INTEGER NOT NULL,
+      metadata TEXT DEFAULT '{}',
+      created_at INTEGER DEFAULT (strftime('%s','now') * 1000)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_session_assets_session ON session_assets(session_id);
+    CREATE INDEX IF NOT EXISTS idx_session_assets_attendance ON session_assets(attendance_id);
+    CREATE INDEX IF NOT EXISTS idx_session_assets_student ON session_assets(student_id);
+    CREATE INDEX IF NOT EXISTS idx_session_assets_type ON session_assets(asset_type);
 
 
     CREATE TABLE IF NOT EXISTS chat_messages (

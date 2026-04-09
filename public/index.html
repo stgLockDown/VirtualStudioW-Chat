@@ -197,10 +197,14 @@
                 <th>Left</th>
                 <th>Duration</th>
                 <th>Date</th>
+                <th>Evidence</th>
+                <th>Actions</th>
+              </tr>
               </tr>
             </thead>
             <tbody id="attendance-tbody">
-              <tr><td colspan="7" class="loading">Loading attendance records...</td></tr>
+              <tr><td colspan="9" class="loading">Loading attendance records...</td></tr>
+
             </tbody>
           </table>
         </div>
@@ -214,6 +218,74 @@
     </div>
   </div>
 </div>
+
+
+<!-- Session Details Modal -->
+<div id="session-details-modal" class="modal" style="display:none;">
+  <div class="modal-overlay" onclick="closeSessionModal()"></div>
+  <div class="modal-content session-modal">
+    <div class="modal-header">
+      <h2>📋 Session Details</h2>
+      <button class="modal-close" onclick="closeSessionModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="session-info-grid">
+        <div class="session-info-card">
+          <h3>👤 Student Information</h3>
+          <p><strong>Name:</strong> <span id="modal-student-name">-</span></p>
+          <p><strong>Student ID:</strong> <span id="modal-student-id">-</span></p>
+        </div>
+        <div class="session-info-card">
+          <h3>🏫 Session Information</h3>
+          <p><strong>Room:</strong> <span id="modal-room-name">-</span></p>
+          <p><strong>Instructor:</strong> <span id="modal-instructor-name">-</span></p>
+          <p><strong>Session ID:</strong> <span id="modal-session-id">-</span></p>
+        </div>
+        <div class="session-info-card">
+          <h3>⏱️ Time Tracking</h3>
+          <p><strong>Joined:</strong> <span id="modal-joined-at">-</span></p>
+          <p><strong>Left:</strong> <span id="modal-left-at">-</span></p>
+          <p><strong>Duration:</strong> <span id="modal-duration">-</span></p>
+        </div>
+        <div class="session-info-card">
+          <h3>📊 Session Statistics</h3>
+          <p><strong>Screenshots:</strong> <span id="modal-screenshots">0</span></p>
+          <p><strong>Screen Share Time:</strong> <span id="modal-screen-share">0s</span></p>
+          <p><strong>Transcript Segments:</strong> <span id="modal-transcript-count">0</span></p>
+        </div>
+      </div>
+      
+      <div class="session-tabs">
+        <button class="session-tab-btn active" data-tab="screenshots">📸 Screenshots</button>
+        <button class="session-tab-btn" data-tab="transcript">📝 Transcript</button>
+        <button class="session-tab-btn" data-tab="screen-captures">🖥️ Screen Captures</button>
+      </div>
+      
+      <div class="session-tab-content">
+        <div id="session-screenshots" class="session-tab-panel active">
+          <div class="screenshots-grid" id="screenshots-grid">
+            <div class="loading-placeholder">Loading screenshots...</div>
+          </div>
+        </div>
+        <div id="session-transcript" class="session-tab-panel" style="display:none;">
+          <div class="transcript-container" id="session-transcript-content">
+            <div class="loading-placeholder">Loading transcript...</div>
+          </div>
+        </div>
+        <div id="session-screen-captures" class="session-tab-panel" style="display:none;">
+          <div class="screen-captures-grid" id="screen-captures-grid">
+            <div class="loading-placeholder">No screen captures available</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeSessionModal()">Close</button>
+      <button class="btn btn-primary" id="export-session-evidence">📥 Export Evidence</button>
+    </div>
+  </div>
+</div>
+
 
 <div id="lobby-page" class="page lobby-page">
   <div class="lobby-container">

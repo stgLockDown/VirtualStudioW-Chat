@@ -138,8 +138,208 @@ const upload = multer({
 const liveRooms = new Map();
 const socketToUser = new Map();
 
-// ──────────────────────────── Student Attendance Tracking (Medicaid Compliance) ────────────────────────────
+// ───────────────────────────────────────────────────────────── Student Attendance Tracking (Medicaid Compliance) ─────────────────────────────────────────────────────────────
 const activeAttendance = new Map(); // Track active attendance sessions: socketId -> attendance record
+const sessionScreenshotTimers = new Map(); // Track screenshot timers for each session
+const sessionScreenShareDurations = new Map(); // Track screen share duration for each session
+
+// Generate unique session ID
+function generateSessionId(roomId, userId) {
+  return `${roomId}-${userId}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
+// Generate unique asset ID
+function generateAssetId() {
+  return `asset-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
+/**
+ * Capture screenshot data from room (sent by client)
+ */
+async function captureSessionScreenshot(attendanceId, roomId, studentId, socketId) {
+  try {
+    const room = liveRooms.get(roomId);
+    if (!room) return null;
+    
+    const attendanceRecord = activeAttendance.get(socketId);
+    if (!attendanceRecord) return null;
+    
+    // Request screenshot from the student's client
+    // The client will respond with a screenshot data URL
+    const screenshotData = await new Promise((resolve) => {
+      const timeout = setTimeout(() => resolve(null), 5000);
+      
+      // Find student's socket and request screenshot
+      const studentSocket = Array.from(io.sockets.sockets.values())
+        .find(s => s.id === socketId);
+      
+      if (studentSocket) {
+        studentSocket.emit('request-screenshot', { attendanceId });
+        
+        // Listen for response once
+        studentSocket.once('screenshot-captured', (data) => {
+          clearTimeout(timeout);
+          resolve(data);
+        });
+      } else {
+        clearTimeout(timeout);
+        resolve(null);
+      }
+    });
+    
+    if (screenshotData && screenshotData.imageData) {
+      const assetId = generateAssetId();
+      const now = Date.now();
+      
+      // Store in database
+      await db.run(
+        `INSERT INTO session_assets (id, session_id, attendance_id, room_id, student_id, asset_type, thumbnail_data, captured_at, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [assetId, attendanceRecord.session_id, attendanceId, roomId, studentId, 'screenshot', screenshotData.thumbnail || screenshotData.imageData.substring(0, 50000), now, JSON.stringify({ 
+          participantCount: room.participants.size,
+          roomName: room.name 
+        })]
+      );
+      
+      // Update screenshot count
+      await db.run(
+        `UPDATE student_attendance SET screenshots_count = screenshots_count + 1 WHERE id = $1`,
+        [attendanceId]
+      );
+      
+      console.log(`[Attendance] Screenshot captured for student ${studentId} in room ${roomId}`);
+      return assetId;
+    }
+    return null;
+  } catch (error) {
+    console.error('[Attendance] Error capturing screenshot:', error);
+    return null;
+  }
+}
+
+/**
+ * Capture screen share frame
+ */
+async function captureScreenShareFrame(attendanceId, roomId, studentId, socketId) {
+  try {
+    const room = liveRooms.get(roomId);
+    if (!room || !room.screenSharer) return null;
+    
+    const attendanceRecord = activeAttendance.get(socketId);
+    if (!attendanceRecord) return null;
+    
+    // Request screen capture from the screen sharer
+    const screenSharerSocket = Array.from(io.sockets.sockets.values())
+      .find(s => s.id === room.screenSharer);
+    
+    if (!screenSharerSocket) return null;
+    
+    const screenData = await new Promise((resolve) => {
+      const timeout = setTimeout(() => resolve(null), 5000);
+      
+      screenSharerSocket.emit('request-screen-capture', { attendanceId });
+      screenSharerSocket.once('screen-capture-captured', (data) => {
+        clearTimeout(timeout);
+        resolve(data);
+      });
+    });
+    
+    if (screenData && screenData.imageData) {
+      const assetId = generateAssetId();
+      const now = Date.now();
+      
+      // Store in database
+      await db.run(
+        `INSERT INTO session_assets (id, session_id, attendance_id, room_id, student_id, asset_type, file_data, thumbnail_data, captured_at, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [assetId, attendanceRecord.session_id, attendanceId, roomId, studentId, 'screen_capture', screenData.imageData.substring(0, 100000), screenData.thumbnail || screenData.imageData.substring(0, 50000), now, JSON.stringify({
+          screenSharerId: room.screenSharer,
+          participantCount: room.participants.size
+        })]
+      );
+      
+      console.log(`[Attendance] Screen share frame captured for session ${attendanceRecord.session_id}`);
+      return assetId;
+    }
+    return null;
+  } catch (error) {
+    console.error('[Attendance] Error capturing screen share:', error);
+    return null;
+  }
+}
+
+/**
+ * Start periodic screenshot capture for a session
+ */
+function startScreenshotCapture(socketId, attendanceId, roomId, studentId) {
+  // Capture every 5 minutes (300000ms) for Medicaid documentation
+  const INTERVAL = 5 * 60 * 1000;
+  
+  const timer = setInterval(async () => {
+    const attendanceRecord = activeAttendance.get(socketId);
+    if (!attendanceRecord) {
+      // Student left, stop capturing
+      stopScreenshotCapture(socketId);
+      return;
+    }
+    
+    await captureSessionScreenshot(attendanceId, roomId, studentId, socketId);
+    
+    // Also capture screen share if active
+    const room = liveRooms.get(roomId);
+    if (room && room.screenSharer) {
+      await captureScreenShareFrame(attendanceId, roomId, studentId, socketId);
+    }
+  }, INTERVAL);
+  
+  sessionScreenshotTimers.set(socketId, timer);
+  
+  // Also capture initial screenshot after 10 seconds
+  setTimeout(async () => {
+    const attendanceRecord = activeAttendance.get(socketId);
+    if (attendanceRecord) {
+      await captureSessionScreenshot(attendanceId, roomId, studentId, socketId);
+    }
+  }, 10000);
+  
+  console.log(`[Attendance] Started screenshot capture for session ${attendanceId}`);
+}
+
+/**
+ * Stop screenshot capture for a session
+ */
+function stopScreenshotCapture(socketId) {
+  const timer = sessionScreenshotTimers.get(socketId);
+  if (timer) {
+    clearInterval(timer);
+    sessionScreenshotTimers.delete(socketId);
+  }
+}
+
+/**
+ * Track screen share start for a student's session
+ */
+function trackScreenShareStart(socketId) {
+  const attendanceRecord = activeAttendance.get(socketId);
+  if (attendanceRecord) {
+    sessionScreenShareDurations.set(socketId, {
+      startTime: Date.now(),
+      totalDuration: sessionScreenShareDurations.get(socketId)?.totalDuration || 0
+    });
+  }
+}
+
+/**
+ * Track screen share stop for a student's session
+ */
+function trackScreenShareStop(socketId) {
+  const tracking = sessionScreenShareDurations.get(socketId);
+  if (tracking) {
+    const duration = Math.floor((Date.now() - tracking.startTime) / 1000);
+    tracking.totalDuration += duration;
+    sessionScreenShareDurations.set(socketId, tracking);
+  }
+}
 
 /**
  * Record when a student joins a room
@@ -147,11 +347,13 @@ const activeAttendance = new Map(); // Track active attendance sessions: socketI
 async function recordStudentJoin(socketId, { userId, userName, roomId, roomName, roomType, instructorId, instructorName }) {
   try {
     const attendanceId = `${roomId}-${userId}-${Date.now()}`;
+    const sessionId = generateSessionId(roomId, userId);
     const now = Date.now();
     const sessionDate = new Date(now).toISOString().split('T')[0]; // YYYY-MM-DD format
     
     const attendanceRecord = {
       id: attendanceId,
+      session_id: sessionId,
       student_id: userId,
       student_name: userName,
       room_id: roomId,
@@ -162,20 +364,26 @@ async function recordStudentJoin(socketId, { userId, userName, roomId, roomName,
       joined_at: now,
       left_at: null,
       duration_seconds: 0,
-      session_date: sessionDate
+      session_date: sessionDate,
+      transcript_snapshot: null,
+      screenshots_count: 0,
+      screen_share_duration: 0
     };
     
     // Store in memory for quick access when they leave
     activeAttendance.set(socketId, attendanceRecord);
     
-    // Insert into database
+    // Insert into database with enhanced fields
     await db.run(
-      `INSERT INTO student_attendance (id, student_id, student_name, room_id, room_name, room_type, instructor_id, instructor_name, joined_at, session_date) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-      [attendanceId, userId, userName, roomId, roomName, roomType || 'classroom', instructorId, instructorName, now, sessionDate]
+      `INSERT INTO student_attendance (id, session_id, student_id, student_name, room_id, room_name, room_type, instructor_id, instructor_name, joined_at, session_date, transcript_snapshot, screenshots_count, screen_share_duration) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+      [attendanceId, sessionId, userId, userName, roomId, roomName, roomType || 'classroom', instructorId, instructorName, now, sessionDate, null, 0, 0]
     );
     
-    console.log(`[Attendance] Student ${userName} (${userId}) joined room ${roomId} at ${new Date(now).toISOString()}`);
+    // Start periodic screenshot capture
+    startScreenshotCapture(socketId, attendanceId, roomId, userId);
+    
+    console.log(`[Attendance] Student ${userName} (${userId}) joined room ${roomId} at ${new Date(now).toISOString()}, session: ${sessionId}`);
     return attendanceRecord;
   } catch (error) {
     console.error('[Attendance] Error recording student join:', error);
@@ -196,17 +404,38 @@ async function recordStudentLeave(socketId) {
     const now = Date.now();
     const durationSeconds = Math.floor((now - attendanceRecord.joined_at) / 1000);
     
-    // Update in database
+    // Stop screenshot capture
+    stopScreenshotCapture(socketId);
+    
+    // Get final screen share duration
+    const screenShareTracking = sessionScreenShareDurations.get(socketId);
+    let screenShareDuration = screenShareTracking?.totalDuration || 0;
+    sessionScreenShareDurations.delete(socketId);
+    
+    // Get transcript snapshot from the room
+    const room = liveRooms.get(attendanceRecord.room_id);
+    let transcriptSnapshot = null;
+    if (room && room.activeTranscript && room.activeTranscript.length > 0) {
+      // Filter transcript to only include segments from this session's time window
+      const sessionTranscript = room.activeTranscript.filter(seg => 
+        seg.timestamp >= attendanceRecord.joined_at && seg.timestamp <= now
+      );
+      if (sessionTranscript.length > 0) {
+        transcriptSnapshot = JSON.stringify(sessionTranscript);
+      }
+    }
+    
+    // Update in database with enhanced fields
     await db.run(
-      `UPDATE student_attendance SET left_at = $1, duration_seconds = $2 WHERE id = $3`,
-      [now, durationSeconds, attendanceRecord.id]
+      `UPDATE student_attendance SET left_at = $1, duration_seconds = $2, transcript_snapshot = $3, screen_share_duration = $4 WHERE id = $5`,
+      [now, durationSeconds, transcriptSnapshot, screenShareDuration, attendanceRecord.id]
     );
     
     // Remove from active tracking
     activeAttendance.delete(socketId);
     
-    console.log(`[Attendance] Student ${attendanceRecord.student_name} left room ${attendanceRecord.room_id} after ${durationSeconds} seconds`);
-    return { ...attendanceRecord, left_at: now, duration_seconds: durationSeconds };
+    console.log(`[Attendance] Student ${attendanceRecord.student_name} left room ${attendanceRecord.room_id} after ${durationSeconds} seconds, screenshots: ${attendanceRecord.screenshots_count}, screen share: ${screenShareDuration}s`);
+    return { ...attendanceRecord, left_at: now, duration_seconds: durationSeconds, transcript_snapshot: transcriptSnapshot, screen_share_duration: screenShareDuration };
   } catch (error) {
     console.error('[Attendance] Error recording student leave:', error);
     return null;
@@ -288,6 +517,38 @@ async function getAllAttendance(startDate = null, endDate = null, roomId = null,
   } catch (error) {
     console.error('[Attendance] Error getting all attendance:', error);
     return [];
+  }
+}
+
+/**
+ * Get session assets for an attendance record
+ */
+async function getSessionAssets(attendanceId) {
+  try {
+    const assets = await db.getAll(
+      `SELECT id, session_id, asset_type, thumbnail_data, captured_at, metadata FROM session_assets WHERE attendance_id = $1 ORDER BY captured_at ASC`,
+      [attendanceId]
+    );
+    return assets;
+  } catch (error) {
+    console.error('[Attendance] Error getting session assets:', error);
+    return [];
+  }
+}
+
+/**
+ * Get full asset data (including file_data)
+ */
+async function getAssetData(assetId) {
+  try {
+    const asset = await db.getOne(
+      `SELECT * FROM session_assets WHERE id = $1`,
+      [assetId]
+    );
+    return asset;
+  } catch (error) {
+    console.error('[Attendance] Error getting asset data:', error);
+    return null;
   }
 }
 
@@ -1372,8 +1633,7 @@ app.get('/api/attendance/export', authMiddleware, requireRole('admin'), async (r
       csvRows.push(row.join(','));
     }
     
-    const csv = csvRows.join('
-');
+    const csv = csvRows.join('\n');
     const filename = `attendance_${startDate || 'all'}_${endDate || 'all'}.csv`;
     
     res.setHeader('Content-Type', 'text/csv');
@@ -1384,6 +1644,127 @@ app.get('/api/attendance/export', authMiddleware, requireRole('admin'), async (r
     res.status(500).json({ error: e.message });
   }
 });
+
+
+// Session Assets API Endpoints (for Medicaid compliance)
+
+// Get session assets for an attendance record
+app.get('/api/attendance/:attendanceId/assets', authMiddleware, async (req, res) => {
+  try {
+    const { attendanceId } = req.params;
+    const assets = await getSessionAssets(attendanceId);
+    res.json({ assets });
+  } catch (e) {
+    console.error('Error getting session assets:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get full asset data (screenshot or screen capture)
+app.get('/api/assets/:assetId', authMiddleware, async (req, res) => {
+  try {
+    const { assetId } = req.params;
+    const asset = await getAssetData(assetId);
+    if (!asset) {
+      return res.status(404).json({ error: 'Asset not found' });
+    }
+    res.json({ asset });
+  } catch (e) {
+    console.error('Error getting asset:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get session details with assets and transcript
+app.get('/api/attendance/:attendanceId/session-details', authMiddleware, async (req, res) => {
+  try {
+    const { attendanceId } = req.params;
+    const attendance = await db.getOne(
+      'SELECT * FROM student_attendance WHERE id = $1',
+      [attendanceId]
+    );
+    if (!attendance) {
+      return res.status(404).json({ error: 'Attendance record not found' });
+    }
+    
+    const assets = await getSessionAssets(attendanceId);
+    const transcript = attendance.transcript_snapshot ? JSON.parse(attendance.transcript_snapshot) : [];
+    
+    res.json({
+      attendance,
+      assets,
+      transcript,
+      summary: {
+        duration: attendance.duration_seconds,
+        screenshots: attendance.screenshots_count,
+        screenShareDuration: attendance.screen_share_duration,
+        transcriptSegments: transcript.length
+      }
+    });
+  } catch (e) {
+    console.error('Error getting session details:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Export session evidence as PDF-ready data
+app.get('/api/attendance/:attendanceId/export-evidence', authMiddleware, requireRole('admin'), async (req, res) => {
+  try {
+    const { attendanceId } = req.params;
+    const attendance = await db.getOne(
+      'SELECT * FROM student_attendance WHERE id = $1',
+      [attendanceId]
+    );
+    if (!attendance) {
+      return res.status(404).json({ error: 'Attendance record not found' });
+    }
+    
+    const assets = await db.getAll(
+      'SELECT id, asset_type, thumbnail_data, captured_at, metadata FROM session_assets WHERE attendance_id = $1 ORDER BY captured_at ASC',
+      [attendanceId]
+    );
+    
+    const transcript = attendance.transcript_snapshot ? JSON.parse(attendance.transcript_snapshot) : [];
+    
+    // Generate evidence report
+    const evidenceReport = {
+      sessionInfo: {
+        studentName: attendance.student_name,
+        studentId: attendance.student_id,
+        roomName: attendance.room_name,
+        roomId: attendance.room_id,
+        instructorName: attendance.instructor_name,
+        sessionDate: attendance.session_date,
+        joinedAt: new Date(attendance.joined_at).toISOString(),
+        leftAt: attendance.left_at ? new Date(attendance.left_at).toISOString() : 'N/A',
+        durationMinutes: Math.floor(attendance.duration_seconds / 60),
+        durationSeconds: attendance.duration_seconds
+      },
+      evidence: {
+        screenshotCount: attendance.screenshots_count,
+        screenShareDurationSeconds: attendance.screen_share_duration,
+        transcriptSegments: transcript.length
+      },
+      assets: assets.map(a => ({
+        id: a.id,
+        type: a.asset_type,
+        capturedAt: new Date(a.captured_at).toISOString(),
+        metadata: a.metadata ? JSON.parse(a.metadata) : {}
+      })),
+      transcript: transcript.map(t => ({
+        speaker: t.speaker,
+        text: t.text,
+        timestamp: new Date(t.timestamp).toISOString()
+      }))
+    };
+    
+    res.json(evidenceReport);
+  } catch (e) {
+    console.error('Error exporting session evidence:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 
 // SPA fallback
 app.get('/{*splat}', (req, res) => { res.sendFile(path.join(__dirname, '..', 'public', 'index.html')); });
