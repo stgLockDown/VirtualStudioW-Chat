@@ -1897,15 +1897,59 @@ function renderWaitingRoom(){
   const c=$('#waiting-room-container');
   if((!S.isHost && !isPrivilegedRole())||!S.waitingList.length){c.innerHTML='';return;}
   c.innerHTML=`<div class="waiting-room-section">
-    <div class="waiting-room-title">⏳ Waiting (${S.waitingList.length}) <button class="btn btn-success btn-sm" style="margin-left:auto;" onclick="S.socket.emit('admit-all')">Admit All</button></div>
-    ${S.waitingList.map(w=>`<div class="waiting-item">
+    <div class="waiting-room-title">⏳ Waiting (${S.waitingList.length}) <button class="btn btn-success btn-sm" style="margin-left:auto;" id="admit-all-btn">Admit All</button></div>
+    ${S.waitingList.map(w=>`<div class="waiting-item" data-wid="${w.id}">
       <div class="participant-avatar" style="background:linear-gradient(135deg,${genColor(w.name)},${genColor(w.name+'2')});width:28px;height:28px;font-size:10px;">${initials(w.name)}</div>
       <span class="waiting-item-name">${escHtml(w.name)} <span style="font-size:10px;color:var(--text-muted)">(${w.role})</span></span>
       <div class="waiting-item-actions">
-        <button class="btn btn-success btn-sm" onclick="S.socket.emit('admit-participant',{participantId:'${w.id}'})">Admit</button>
-        <button class="btn btn-danger btn-sm" onclick="S.socket.emit('deny-participant',{participantId:'${w.id}'})">Deny</button>
+        <button class="btn btn-success btn-sm admit-btn" data-participant-id="${w.id}">Admit</button>
+        <button class="btn btn-danger btn-sm deny-btn" data-participant-id="${w.id}">Deny</button>
       </div>
     </div>`).join('')}</div>`;
+  
+  // Add event listeners for admit all button
+  const admitAllBtn = $('#admit-all-btn');
+  if (admitAllBtn) {
+    admitAllBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      console.log('[UI] Admit All clicked');
+      if (S.socket && S.socket.connected) {
+        S.socket.emit('admit-all');
+      } else {
+        console.error('[UI] Socket not connected');
+        toast('Connection error. Please refresh.', 'error');
+      }
+    });
+  }
+  
+  // Add event listeners for individual admit/deny buttons
+  c.querySelectorAll('.admit-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const participantId = btn.dataset.participantId;
+      console.log('[UI] Admit clicked for participant:', participantId);
+      if (S.socket && S.socket.connected) {
+        S.socket.emit('admit-participant', { participantId });
+      } else {
+        console.error('[UI] Socket not connected');
+        toast('Connection error. Please refresh.', 'error');
+      }
+    });
+  });
+  
+  c.querySelectorAll('.deny-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const participantId = btn.dataset.participantId;
+      console.log('[UI] Deny clicked for participant:', participantId);
+      if (S.socket && S.socket.connected) {
+        S.socket.emit('deny-participant', { participantId });
+      } else {
+        console.error('[UI] Socket not connected');
+        toast('Connection error. Please refresh.', 'error');
+      }
+    });
+  });
 }
 
 // ─── Breakout Rooms ─────────────────────────────────────────────
