@@ -1049,6 +1049,231 @@ app.post('/api/transcripts', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+
+// ── Transcript Search API (ChatGPT-like) ──
+app.get('/api/transcripts/search', authMiddleware, async (req, res) => {
+  try {
+    const { q, roomId, startDate, endDate, limit = 50 } = req.query;
+    
+    if (!q || q.trim().length < 2) {
+      return res.status(400).json({ error: 'Search query must be at least 2 characters' });
+    }
+    
+    const searchQuery = q.toLowerCase().trim();
+    const results = [];
+    
+    // Search in recordings transcripts
+    const recordings = await db.getAll(
+      `SELECT r.id, r.room_id, r.room_name, r.recorded_by_name, r.duration, r.created_at, r.transcript, r.room_type
+       FROM recordings r 
+       WHERE r.transcript IS NOT NULL AND r.transcript != ''
+       ORDER BY r.created_at DESC LIMIT 100`
+    );
+    
+    for (const rec of recordings) {
+      if (rec.transcript && rec.transcript.toLowerCase().includes(searchQuery)) {
+        // Find matching segments
+        const transcriptLines = rec.transcript.split('\n');
+        const matches = [];
+        
+        for (const line of transcriptLines) {
+          if (line.toLowerCase().includes(searchQuery)) {
+            matches.push({
+              text: line,
+              highlighted: line.replace(new RegExp(`(${escapeRegex(q)})`, 'gi'), '<mark>$1</mark>')
+            });
+          }
+        }
+        
+        if (matches.length > 0) {
+          results.push({
+            type: 'recording',
+            id: rec.id,
+            roomId: rec.room_id,
+            roomName: rec.room_name,
+            recordedBy: rec.recorded_by_name,
+            duration: rec.duration,
+            createdAt: rec.created_at,
+            matches: matches.slice(0, 10),
+            matchCount: matches.length,
+            snippet: matches[0]?.text?.substring(0, 200) || ''
+          });
+        }
+      }
+    }
+    
+    // Search in transcripts table
+    const transcripts = await db.getAll(
+      `SELECT t.id, t.room_id, t.content, t.created_at, r.name as room_name
+       FROM transcripts t
+       LEFT JOIN (SELECT id, name FROM classrooms UNION SELECT id, name FROM meeting_rooms) r ON t.room_id = r.id
+       WHERE t.content IS NOT NULL AND t.content != '[]'
+       ORDER BY t.created_at DESC LIMIT 100`
+    );
+    
+    for (const tr of transcripts) {
+      try {
+        const content = JSON.parse(tr.content || '[]');
+        const matches = [];
+        
+        for (const segment of content) {
+          if (segment.text && segment.text.toLowerCase().includes(searchQuery)) {
+            const text = `[${segment.speaker || 'Unknown'}]: ${segment.text}`;
+            matches.push({
+              speaker: segment.speaker,
+              text: segment.text,
+              timestamp: segment.timestamp,
+              highlighted: text.replace(new RegExp(`(${escapeRegex(q)})`, 'gi'), '<mark>$1</mark>')
+            });
+          }
+        }
+        
+        if (matches.length > 0) {
+          results.push({
+            type: 'transcript',
+            id: tr.id,
+            roomId: tr.room_id,
+            roomName: tr.room_name || tr.room_id,
+            createdAt: tr.created_at,
+            matches: matches.slice(0, 10),
+            matchCount: matches.length,
+            snippet: matches[0]?.text?.substring(0, 200) || ''
+          });
+        }
+      } catch (e) {
+        // Skip malformed JSON
+      }
+    }
+    
+    // Search in student attendance transcripts (session snapshots)
+    const attendanceTranscripts = await db.getAll(
+      `SELECT a.id, a.session_id, a.student_name, a.room_name, a.session_date, a.transcript_snapshot, a.joined_at
+       FROM student_attendance a
+       WHERE a.transcript_snapshot IS NOT NULL AND a.transcript_snapshot != '' AND a.transcript_snapshot != '[]'
+       ORDER BY a.joined_at DESC LIMIT 100`
+    );
+    
+    for (const at of attendanceTranscripts) {
+      try {
+        const content = JSON.parse(at.transcript_snapshot || '[]');
+        const matches = [];
+        
+        for (const segment of content) {
+          if (segment.text && segment.text.toLowerCase().includes(searchQuery)) {
+            const text = `[${segment.speaker || 'Unknown'}]: ${segment.text}`;
+            matches.push({
+              speaker: segment.speaker,
+              text: segment.text,
+              timestamp: segment.timestamp,
+              highlighted: text.replace(new RegExp(`(${escapeRegex(q)})`, 'gi'), '<mark>$1</mark>')
+            });
+          }
+        }
+        
+        if (matches.length > 0) {
+          results.push({
+            type: 'session',
+            id: at.id,
+            sessionId: at.session_id,
+            studentName: at.student_name,
+            roomName: at.room_name,
+            sessionDate: at.session_date,
+            joinedAt: at.joined_at,
+            matches: matches.slice(0, 10),
+            matchCount: matches.length,
+            snippet: matches[0]?.text?.substring(0, 200) || ''
+          });
+        }
+      } catch (e) {
+        // Skip malformed JSON
+      }
+    }
+    
+    // Sort results by relevance (match count) and date
+    results.sort((a, b) => b.matchCount - a.matchCount || (b.createdAt || 0) - (a.createdAt || 0));
+    
+    res.json({
+      query: q,
+      totalResults: results.length,
+      results: results.slice(0, parseInt(limit))
+    });
+  } catch (e) {
+    console.error('Transcript search error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get all transcripts for a room
+app.get('/api/transcripts/room/:roomId', authMiddleware, async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    const transcripts = [];
+    
+    // From recordings
+    const recordings = await db.getAll(
+      'SELECT id, room_id, room_name, recorded_by_name, duration, created_at, transcript FROM recordings WHERE room_id = $1 ORDER BY created_at DESC',
+      [roomId]
+    );
+    
+    for (const rec of recordings) {
+      if (rec.transcript) {
+        transcripts.push({
+          type: 'recording',
+          id: rec.id,
+          roomName: rec.room_name,
+          recordedBy: rec.recorded_by_name,
+          duration: rec.duration,
+          createdAt: rec.created_at,
+          content: rec.transcript
+        });
+      }
+    }
+    
+    // From transcripts table
+    const trs = await db.getAll(
+      'SELECT id, room_id, content, created_at FROM transcripts WHERE room_id = $1 ORDER BY created_at DESC',
+      [roomId]
+    );
+    
+    for (const tr of trs) {
+      transcripts.push({
+        type: 'transcript',
+        id: tr.id,
+        createdAt: tr.created_at,
+        content: tr.content
+      });
+    }
+    
+    res.json({ roomId, transcripts });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get transcript statistics
+app.get('/api/transcripts/stats', authMiddleware, async (req, res) => {
+  try {
+    const recordingCount = await db.getOne('SELECT COUNT(*) as count FROM recordings WHERE transcript IS NOT NULL AND transcript != ""');
+    const transcriptCount = await db.getOne('SELECT COUNT(*) as count FROM transcripts WHERE content IS NOT NULL AND content != "[]"');
+    const sessionCount = await db.getOne('SELECT COUNT(*) as count FROM student_attendance WHERE transcript_snapshot IS NOT NULL AND transcript_snapshot != "[]"');
+    
+    const recentSearches = []; // Could be stored in a separate table if needed
+    
+    res.json({
+      recordingsWithTranscripts: recordingCount?.count || 0,
+      standaloneTranscripts: transcriptCount?.count || 0,
+      sessionsWithTranscripts: sessionCount?.count || 0,
+      recentSearches
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+function escapeRegex(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 // ── Integrations API ──
 app.get('/api/integrations', async (req, res) => {
   try {

@@ -116,6 +116,7 @@ async function loadDashboard() {
   else if(view==='admin') await renderAdmin(c);
   else if(view==='roles') await renderRoles(c);
   else if(view==='attendance') { showPage('attendance-page'); loadAttendanceDashboard(); return; }
+  else if(view==='transcript-search') { showPage('transcript-search-page'); loadTranscriptSearch(); return; }
 }
 
 async function renderOverview(c) {
@@ -4009,6 +4010,153 @@ document.addEventListener('click', async (e) => {
   }
 });
 
+
+
+// ── Transcript Search Functions ───────────────────────────────────────────────────
+let transcriptSearchData = { recordings: 0, transcripts: 0, sessions: 0 };
+
+async function loadTranscriptSearch() {
+  try {
+    const response = await fetch('/api/transcripts/stats', { headers: getAuthHeaders() });
+    if (response.ok) {
+      const data = await response.json();
+      transcriptSearchData = data;
+      document.getElementById('recordings-count').textContent = data.recordingsWithTranscripts || 0;
+      document.getElementById('transcripts-count').textContent = data.standaloneTranscripts || 0;
+      document.getElementById('sessions-count').textContent = data.sessionsWithTranscripts || 0;
+    }
+  } catch (e) {
+    console.error('Error loading transcript stats:', e);
+  }
+}
+
+async function searchTranscripts(query) {
+  if (!query || query.trim().length < 2) {
+    toast('Please enter at least 2 characters', 'warning');
+    return;
+  }
+  
+  const resultsContainer = document.getElementById('search-results-container');
+  const emptyState = document.getElementById('empty-search-state');
+  const loadingState = document.getElementById('search-loading');
+  const resultsDiv = document.getElementById('search-results');
+  
+  // Show loading
+  emptyState.style.display = 'none';
+  resultsContainer.style.display = 'none';
+  loadingState.style.display = 'block';
+  
+  try {
+    const response = await fetch(`/api/transcripts/search?q=${encodeURIComponent(query)}`, {
+      headers: getAuthHeaders()
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      
+      // Hide loading
+      loadingState.style.display = 'none';
+      resultsContainer.style.display = 'block';
+      
+      // Update results count
+      document.getElementById('results-title').textContent = `Results for "${query}"`;
+      document.getElementById('results-count').textContent = `${data.totalResults} matches found`;
+      
+      if (data.results.length === 0) {
+        resultsDiv.innerHTML = `
+          <div class="empty-search-state">
+            <div class="empty-icon">🔍</div>
+            <h3>No results found</h3>
+            <p>Try different keywords or check your spelling</p>
+          </div>
+        `;
+        return;
+      }
+      
+      // Render results
+      resultsDiv.innerHTML = data.results.map(result => renderSearchResult(result)).join('');
+    } else {
+      loadingState.style.display = 'none';
+      toast('Search failed', 'error');
+    }
+  } catch (e) {
+    console.error('Search error:', e);
+    loadingState.style.display = 'none';
+    toast('Search failed', 'error');
+  }
+}
+
+function renderSearchResult(result) {
+  const typeIcon = result.type === 'recording' ? '🎬' : result.type === 'session' ? '👤' : '📝';
+  const typeLabel = result.type === 'recording' ? 'Recording' : result.type === 'session' ? 'Session' : 'Transcript';
+  
+  const title = result.type === 'recording' 
+    ? result.roomName 
+    : result.type === 'session' 
+      ? `${result.studentName} - ${result.roomName}`
+      : result.roomName;
+  
+  const meta = result.type === 'recording'
+    ? `Recorded by ${result.recordedBy} • ${formatDuration(result.duration)}`
+    : result.type === 'session'
+      ? `${result.sessionDate} • ${result.matchCount} matches`
+      : `${new Date(result.createdAt).toLocaleDateString()} • ${result.matchCount} matches`;
+  
+  return `
+    <div class="result-card" onclick="viewTranscriptResult('${result.id}', '${result.type}')">
+      <div class="result-header">
+        <div class="result-type-icon ${result.type}">${typeIcon}</div>
+        <div class="result-info">
+          <div class="result-title">${escapeHtml(title)}</div>
+          <div class="result-meta">${meta}</div>
+        </div>
+        <span class="result-badge">${result.matchCount} matches</span>
+      </div>
+      <div class="result-matches">
+        ${result.matches.slice(0, 3).map(m => `
+          <div class="match-item">${m.highlighted || escapeHtml(m.text)}</div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function viewTranscriptResult(id, type) {
+  if (type === 'recording') {
+    // Navigate to recordings page and show the recording
+    window.location.hash = 'recordings';
+    loadDashboard();
+  } else if (type === 'session') {
+    // Show session details modal
+    viewSessionDetails(id);
+  } else {
+    // Show transcript
+    toast('Opening transcript...', 'info');
+  }
+}
+
+function quickSearch(term) {
+  document.getElementById('transcript-search-input').value = term;
+  searchTranscripts(term);
+}
+
+// Transcript search event listeners
+document.addEventListener('DOMContentLoaded', () => {
+  const searchInput = document.getElementById('transcript-search-input');
+  const searchBtn = document.getElementById('transcript-search-btn');
+  
+  if (searchInput && searchBtn) {
+    searchBtn.addEventListener('click', () => {
+      searchTranscripts(searchInput.value);
+    });
+    
+    searchInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        searchTranscripts(searchInput.value);
+      }
+    });
+  }
+});
 
 //  STARTUP — Check auth then init
 // ────────────────────────────────────────────────────────────────────────────────
