@@ -104,7 +104,7 @@ function fmtSize(b){if(!b)return'0 B';if(b<1024)return b+' B';if(b<1048576)retur
 // ═══════════════════════════════════════════════════════════════════
 async function loadDashboard() {
   const view = S.currentView;
-  $('#dashboard-title').textContent = {overview:'Overview',classrooms:'Classrooms',meetings:'Meeting Rooms',recordings:'Recordings',summaries:'Meeting Summaries',admin:'Admin Panel',roles:'User Roles'}[view]||'Overview';
+  $('#dashboard-title').textContent = {overview:'Overview',classrooms:'Classrooms',meetings:'Meeting Rooms',recordings:'Recordings',summaries:'Meeting Summaries',admin:'Admin Panel',roles:'User Roles',attendance:'Attendance Records'}[view]||'Overview';
   $$('.sidebar-item').forEach(i=>{i.classList.toggle('active',i.dataset.view===view);});
   const c=$('#dashboard-content');
 
@@ -115,6 +115,8 @@ async function loadDashboard() {
   else if(view==='summaries') await renderSummaries(c);
   else if(view==='admin') await renderAdmin(c);
   else if(view==='roles') await renderRoles(c);
+  else if(view==='attendance') { showPage('attendance-page'); loadAttendanceDashboard(); return; }
+  else if(view==='transcript-search') { showPage('transcript-search-page'); loadTranscriptSearch(); return; }
 }
 
 async function renderOverview(c) {
@@ -863,6 +865,122 @@ function connectSocket(){
   S.socket.on('breakout-rooms-update',({breakoutRooms})=>{S.breakoutRooms=breakoutRooms;renderBreakoutRooms(breakoutRooms);});
   S.socket.on('breakout-invitation',({breakoutId,breakoutName})=>{if(confirm(`You're invited to breakout room "${breakoutName}". Join?`)){S.socket.emit('leave-room');S.roomId=breakoutId;S.socket.emit('join-room',{roomId:breakoutId,userName:S.userName,userRole:S.userRole},(r)=>{if(r.success&&!r.waiting)enterMeeting(r);});}});
   S.socket.on('breakout-closed',({returnTo})=>{toast('Breakout room closed, returning...','info');S.socket.emit('leave-room');S.peers.forEach(p=>p.pc.close());S.peers.clear();S.roomId=returnTo;S.socket.emit('join-room',{roomId:returnTo,userName:S.userName,userRole:S.userRole},(r)=>{if(r.success&&!r.waiting)enterMeeting(r);});});
+
+  // Session evidence capture handlers (for Medicaid compliance)
+  S.socket.on('request-screenshot', async ({ attendanceId }) => {
+    try {
+      const screenshotData = await captureSessionScreenshot();
+      if (screenshotData) {
+        S.socket.emit('screenshot-captured', { attendanceId, imageData: screenshotData });
+      }
+    } catch (e) {
+      console.error('Screenshot capture failed:', e);
+    }
+  });
+  
+  S.socket.on('request-screen-capture', async ({ attendanceId }) => {
+    try {
+      const screenData = await captureScreenShare();
+      if (screenData) {
+        S.socket.emit('screen-capture-captured', { attendanceId, imageData: screenData });
+      }
+    } catch (e) {
+      console.error('Screen capture failed:', e);
+    }
+  });
+}
+
+// Capture screenshot of the video meeting
+async function captureSessionScreenshot() {
+  try {
+    const videoGrid = $('#video-grid');
+    if (!videoGrid) return null;
+    
+    // Create a canvas to capture the video grid
+    const canvas = document.createElement('canvas');
+    const rect = videoGrid.getBoundingClientRect();
+    canvas.width = Math.min(rect.width, 1280);
+    canvas.height = Math.min(rect.height, 720);
+    const ctx = canvas.getContext('2d');
+    
+    // Fill background
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    // Draw video elements
+    const videos = videoGrid.querySelectorAll('video');
+    const participants = [];
+    
+    if (videos.length > 0) {
+      const cols = Math.ceil(Math.sqrt(videos.length));
+      const rows = Math.ceil(videos.length / cols);
+      const cellW = canvas.width / cols;
+      const cellH = canvas.height / rows;
+      
+      videos.forEach((video, i) => {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        try {
+          ctx.drawImage(video, col * cellW, row * cellH, cellW, cellH);
+          participants.push(video.dataset?.userName || 'Participant');
+        } catch (e) {}
+      });
+    }
+    
+    // Add timestamp overlay
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(0, canvas.height - 40, canvas.width, 40);
+    ctx.fillStyle = '#fff';
+    ctx.font = '14px sans-serif';
+    const timestamp = new Date().toISOString();
+    const userInfo = S.userName || 'Unknown';
+    const roomInfo = S.roomId || 'Unknown Room';
+    ctx.fillText(`${timestamp} | Room: ${roomInfo} | User: ${userInfo}`, 10, canvas.height - 15);
+    
+    // Return as data URL
+    return {
+      imageData: canvas.toDataURL('image/jpeg', 0.7),
+      thumbnail: canvas.toDataURL('image/jpeg', 0.3).substring(0, 10000),
+      participants,
+      timestamp
+    };
+  } catch (e) {
+    console.error('Error capturing screenshot:', e);
+    return null;
+  }
+}
+
+// Capture current screen share
+async function captureScreenShare() {
+  try {
+    // Find the screen share video element
+    const screenVideo = document.querySelector('.screen-share-video, video[data-screen-share="true"]');
+    if (!screenVideo || screenVideo.paused) return null;
+    
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.min(screenVideo.videoWidth || 1280, 1280);
+    canvas.height = Math.min(screenVideo.videoHeight || 720, 720);
+    const ctx = canvas.getContext('2d');
+    
+    ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
+    
+    // Add timestamp overlay
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(0, canvas.height - 30, canvas.width, 30);
+    ctx.fillStyle = '#fff';
+    ctx.font = '12px sans-serif';
+    ctx.fillText(`Screen Share - ${new Date().toISOString()}`, 10, canvas.height - 10);
+    
+    return {
+      imageData: canvas.toDataURL('image/jpeg', 0.7),
+      thumbnail: canvas.toDataURL('image/jpeg', 0.3).substring(0, 10000),
+      timestamp: Date.now()
+    };
+  } catch (e) {
+    console.error('Error capturing screen share:', e);
+    return null;
+  }
+
 }
 
 // ─── WebRTC ─────────────────────────────────────────────────────
@@ -1779,15 +1897,59 @@ function renderWaitingRoom(){
   const c=$('#waiting-room-container');
   if((!S.isHost && !isPrivilegedRole())||!S.waitingList.length){c.innerHTML='';return;}
   c.innerHTML=`<div class="waiting-room-section">
-    <div class="waiting-room-title">⏳ Waiting (${S.waitingList.length}) <button class="btn btn-success btn-sm" style="margin-left:auto;" onclick="S.socket.emit('admit-all')">Admit All</button></div>
-    ${S.waitingList.map(w=>`<div class="waiting-item">
+    <div class="waiting-room-title">⏳ Waiting (${S.waitingList.length}) <button class="btn btn-success btn-sm" style="margin-left:auto;" id="admit-all-btn">Admit All</button></div>
+    ${S.waitingList.map(w=>`<div class="waiting-item" data-wid="${w.id}">
       <div class="participant-avatar" style="background:linear-gradient(135deg,${genColor(w.name)},${genColor(w.name+'2')});width:28px;height:28px;font-size:10px;">${initials(w.name)}</div>
       <span class="waiting-item-name">${escHtml(w.name)} <span style="font-size:10px;color:var(--text-muted)">(${w.role})</span></span>
       <div class="waiting-item-actions">
-        <button class="btn btn-success btn-sm" onclick="S.socket.emit('admit-participant',{participantId:'${w.id}'})">Admit</button>
-        <button class="btn btn-danger btn-sm" onclick="S.socket.emit('deny-participant',{participantId:'${w.id}'})">Deny</button>
+        <button class="btn btn-success btn-sm admit-btn" data-participant-id="${w.id}">Admit</button>
+        <button class="btn btn-danger btn-sm deny-btn" data-participant-id="${w.id}">Deny</button>
       </div>
     </div>`).join('')}</div>`;
+  
+  // Add event listeners for admit all button
+  const admitAllBtn = $('#admit-all-btn');
+  if (admitAllBtn) {
+    admitAllBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      console.log('[UI] Admit All clicked');
+      if (S.socket && S.socket.connected) {
+        S.socket.emit('admit-all');
+      } else {
+        console.error('[UI] Socket not connected');
+        toast('Connection error. Please refresh.', 'error');
+      }
+    });
+  }
+  
+  // Add event listeners for individual admit/deny buttons
+  c.querySelectorAll('.admit-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const participantId = btn.dataset.participantId;
+      console.log('[UI] Admit clicked for participant:', participantId);
+      if (S.socket && S.socket.connected) {
+        S.socket.emit('admit-participant', { participantId });
+      } else {
+        console.error('[UI] Socket not connected');
+        toast('Connection error. Please refresh.', 'error');
+      }
+    });
+  });
+  
+  c.querySelectorAll('.deny-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const participantId = btn.dataset.participantId;
+      console.log('[UI] Deny clicked for participant:', participantId);
+      if (S.socket && S.socket.connected) {
+        S.socket.emit('deny-participant', { participantId });
+      } else {
+        console.error('[UI] Socket not connected');
+        toast('Connection error. Please refresh.', 'error');
+      }
+    });
+  });
 }
 
 // ─── Breakout Rooms ─────────────────────────────────────────────
@@ -2338,6 +2500,10 @@ function applyRoleVisibility() {
     
     // Hide admin for non-admins
     if (view === 'admin') {
+      item.style.display = admin ? 'flex' : 'none';
+    }
+    // Hide attendance for non-admins (admin only for Medicaid compliance)
+    else if (view === 'attendance') {
       item.style.display = admin ? 'flex' : 'none';
     }
     // Hide restricted views for students
@@ -3508,6 +3674,534 @@ async function goToLobbyInternal() {
 }
 
 // ────────────────────────────────────────────────────────────────────────────────
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ATTENDANCE RECORDS FUNCTIONS (Medicaid Compliance)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let attendanceData = [];
+let attendanceSummary = {};
+
+async function loadAttendanceDashboard() {
+  const startDate = document.getElementById('attendance-start-date')?.value || '';
+  const endDate = document.getElementById('attendance-end-date')?.value || '';
+  
+  try {
+    // Load attendance records
+    const recordsUrl = `/api/attendance?startDate=${startDate}&endDate=${endDate}`;
+    const recordsRes = await fetch(recordsUrl, { headers: getAuthHeaders() });
+    if (recordsRes.ok) {
+      attendanceData = await recordsRes.json();
+      renderAttendanceTable(attendanceData);
+    }
+    
+    // Load summary stats
+    const summaryUrl = `/api/attendance/summary?startDate=${startDate}&endDate=${endDate}`;
+    const summaryRes = await fetch(summaryUrl, { headers: getAuthHeaders() });
+    if (summaryRes.ok) {
+      attendanceSummary = await summaryRes.json();
+      renderAttendanceSummary(attendanceSummary);
+    }
+  } catch (error) {
+    console.error('Error loading attendance:', error);
+    document.getElementById('attendance-tbody').innerHTML = '<tr><td colspan="7" class="error">Failed to load attendance records</td></tr>';
+  }
+}
+
+function renderAttendanceTable(records) {
+  const tbody = document.getElementById('attendance-tbody');
+  if (!tbody) return;
+  
+  if (!records || records.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" class="empty">No attendance records found</td></tr>';
+    return;
+  }
+  
+  tbody.innerHTML = records.map(record => {
+    const joinedAt = record.joined_at ? new Date(record.joined_at) : null;
+    const leftAt = record.left_at ? new Date(record.left_at) : null;
+    const duration = formatDuration(record.duration_seconds);
+    
+    // Evidence badges
+    const screenshotCount = record.screenshots_count || 0;
+    const screenShareDuration = record.screen_share_duration || 0;
+    const hasTranscript = record.transcript_snapshot ? JSON.parse(record.transcript_snapshot).length : 0;
+    
+    const evidenceBadges = `
+      <div class="evidence-badges">
+        ${screenshotCount > 0 ? `<span class="evidence-badge screenshots" title="${screenshotCount} screenshots">📸 ${screenshotCount}</span>` : ''}
+        ${hasTranscript > 0 ? `<span class="evidence-badge transcript" title="${hasTranscript} transcript segments">📝 ${hasTranscript}</span>` : ''}
+        ${screenShareDuration > 0 ? `<span class="evidence-badge screen-share" title="${Math.floor(screenShareDuration/60)}m screen share">🖥️ ${Math.floor(screenShareDuration/60)}m</span>` : ''}
+      </div>
+    `;
+    
+    return `
+      <tr data-attendance-id="${record.id}">
+        <td>${escapeHtml(record.student_name || 'Unknown')}</td>
+        <td>${escapeHtml(record.room_name || record.room_id)}</td>
+        <td>${escapeHtml(record.instructor_name || '-')}</td>
+        <td>${joinedAt ? joinedAt.toLocaleTimeString() : '-'}</td>
+        <td>${leftAt ? leftAt.toLocaleTimeString() : '<span class="active-badge">In Session</span>'}</td>
+        <td>${duration}</td>
+        <td>${record.session_date || '-'}</td>
+        <td>${evidenceBadges}</td>
+        <td><button class="btn-view-session" onclick="viewSessionDetails('${record.id}')">View</button></td>
+      </tr>
+    `;
+  }).join('');
+}
+
+
+function renderAttendanceSummary(summary) {
+  document.getElementById('total-sessions').textContent = summary.summary?.total_sessions || 0;
+  document.getElementById('unique-students').textContent = summary.summary?.unique_students || 0;
+  document.getElementById('total-rooms').textContent = summary.summary?.total_rooms || 0;
+  
+  const totalSeconds = summary.summary?.total_duration || 0;
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  document.getElementById('total-duration').textContent = `${hours}h ${minutes}m`;
+  
+  // Render daily summary if available
+  const dailyContainer = document.getElementById('daily-summary');
+  if (dailyContainer && summary.daily && summary.daily.length > 0) {
+    dailyContainer.innerHTML = `
+      <table class="attendance-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Sessions</th>
+            <th>Students</th>
+            <th>Total Duration</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${summary.daily.map(day => {
+            const seconds = day.total_duration || 0;
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            return `
+              <tr>
+                <td>${day.session_date}</td>
+                <td>${day.sessions}</td>
+                <td>${day.students}</td>
+                <td>${h}h ${m}m</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  } else {
+    if (dailyContainer) dailyContainer.innerHTML = '<div class="empty">No daily data available</div>';
+  }
+}
+
+function formatDuration(seconds) {
+  if (!seconds) return '-';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>').replace(/"/g, '"');
+}
+
+// Attendance event listeners
+document.addEventListener('DOMContentLoaded', () => {
+  const applyBtn = document.getElementById('apply-attendance-filter');
+  const clearBtn = document.getElementById('clear-attendance-filter');
+  const exportBtn = document.getElementById('export-attendance-csv');
+  const tabBtns = document.querySelectorAll('.attendance-tabs .tab-btn');
+  
+  if (applyBtn) {
+    applyBtn.addEventListener('click', loadAttendanceDashboard);
+  }
+  
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      document.getElementById('attendance-start-date').value = '';
+      document.getElementById('attendance-end-date').value = '';
+      loadAttendanceDashboard();
+    });
+  }
+  
+  if (exportBtn) {
+    exportBtn.addEventListener('click', exportAttendanceCSV);
+  }
+  
+  tabBtns.forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      tabBtns.forEach(b => b.classList.remove('active'));
+      e.target.classList.add('active');
+      
+      const tab = e.target.dataset.tab;
+      document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
+      document.getElementById(`tab-${tab}`).style.display = 'block';
+    });
+  });
+});
+
+async function exportAttendanceCSV() {
+  const startDate = document.getElementById('attendance-start-date')?.value || '';
+  const endDate = document.getElementById('attendance-end-date')?.value || '';
+  
+  try {
+    const url = `/api/attendance/export?startDate=${startDate}&endDate=${endDate}`;
+    const response = await fetch(url, { headers: getAuthHeaders() });
+    
+    if (response.ok) {
+      const blob = await response.blob();
+      const downloadUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = `attendance_${startDate || 'all'}_${endDate || 'all'}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(downloadUrl);
+      toast('Attendance exported successfully', 'success');
+    } else {
+      toast('Failed to export attendance', 'error');
+    }
+  } catch (error) {
+    console.error('Export error:', error);
+    toast('Failed to export attendance', 'error');
+  }
+}
+
+
+
+// Session Details Modal Functions
+let currentSessionAttendanceId = null;
+
+async function viewSessionDetails(attendanceId) {
+  currentSessionAttendanceId = attendanceId;
+  const modal = document.getElementById('session-details-modal');
+  if (!modal) return;
+  
+  modal.style.display = 'flex';
+  
+  try {
+    const response = await fetch(`/api/attendance/${attendanceId}/session-details`, {
+      headers: getAuthHeaders()
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      renderSessionDetails(data);
+    } else {
+      toast('Failed to load session details', 'error');
+    }
+  } catch (error) {
+    console.error('Error loading session details:', error);
+    toast('Failed to load session details', 'error');
+  }
+}
+
+function renderSessionDetails(data) {
+  const { attendance, assets, transcript, summary } = data;
+  
+  // Populate session info
+  document.getElementById('modal-student-name').textContent = attendance.student_name || '-';
+  document.getElementById('modal-student-id').textContent = attendance.student_id || '-';
+  document.getElementById('modal-room-name').textContent = attendance.room_name || attendance.room_id;
+  document.getElementById('modal-instructor-name').textContent = attendance.instructor_name || '-';
+  document.getElementById('modal-session-id').textContent = attendance.session_id || '-';
+  
+  // Time info
+  const joinedAt = attendance.joined_at ? new Date(attendance.joined_at) : null;
+  const leftAt = attendance.left_at ? new Date(attendance.left_at) : null;
+  document.getElementById('modal-joined-at').textContent = joinedAt ? joinedAt.toLocaleString() : '-';
+  document.getElementById('modal-left-at').textContent = leftAt ? leftAt.toLocaleString() : 'In Progress';
+  document.getElementById('modal-duration').textContent = formatDuration(attendance.duration_seconds);
+  
+  // Statistics
+  document.getElementById('modal-screenshots').textContent = summary.screenshots || 0;
+  document.getElementById('modal-screen-share').textContent = formatDuration(summary.screenShareDuration);
+  document.getElementById('modal-transcript-count').textContent = summary.transcriptSegments || 0;
+  
+  // Render screenshots
+  const screenshotsGrid = document.getElementById('screenshots-grid');
+  const screenshots = assets.filter(a => a.asset_type === 'screenshot');
+  if (screenshots.length > 0) {
+    screenshotsGrid.innerHTML = screenshots.map(s => `
+      <div class="screenshot-item" onclick="viewFullAsset('${s.id}')">
+        <img src="${s.thumbnail_data}" alt="Screenshot" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22120%22><rect fill=%22%23333%22 width=%22200%22 height=%22120%22/><text x=%2250%%22 y=%2250%%22 fill=%22%23666%22 text-anchor=%22middle%22>Screenshot</text></svg>'">
+        <div class="meta">${new Date(s.captured_at).toLocaleTimeString()}</div>
+      </div>
+    `).join('');
+  } else {
+    screenshotsGrid.innerHTML = '<div class="loading-placeholder">No screenshots captured</div>';
+  }
+  
+  // Render transcript
+  const transcriptContainer = document.getElementById('session-transcript-content');
+  if (transcript && transcript.length > 0) {
+    transcriptContainer.innerHTML = transcript.map(seg => `
+      <div class="transcript-segment">
+        <span class="transcript-speaker">${escapeHtml(seg.speaker)}:</span>
+        <span class="transcript-text">${escapeHtml(seg.text)}</span>
+        <span class="transcript-time">${new Date(seg.timestamp).toLocaleTimeString()}</span>
+      </div>
+    `).join('');
+  } else {
+    transcriptContainer.innerHTML = '<div class="loading-placeholder">No transcript available for this session</div>';
+  }
+  
+  // Render screen captures
+  const screenCapturesGrid = document.getElementById('screen-captures-grid');
+  const screenCaptures = assets.filter(a => a.asset_type === 'screen_capture');
+  if (screenCaptures.length > 0) {
+    screenCapturesGrid.innerHTML = screenCaptures.map(s => `
+      <div class="screen-capture-item" onclick="viewFullAsset('${s.id}')">
+        <img src="${s.thumbnail_data}" alt="Screen Capture" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22120%22><rect fill=%22%23333%22 width=%22200%22 height=%22120%22/><text x=%2250%%22 y=%2250%%22 fill=%22%23666%22 text-anchor=%22middle%22>Screen</text></svg>'">
+        <div class="meta">${new Date(s.captured_at).toLocaleTimeString()}</div>
+      </div>
+    `).join('');
+  } else {
+    screenCapturesGrid.innerHTML = '<div class="loading-placeholder">No screen captures available</div>';
+  }
+}
+
+async function viewFullAsset(assetId) {
+  try {
+    const response = await fetch(`/api/assets/${assetId}`, {
+      headers: getAuthHeaders()
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data.asset && data.asset.file_data) {
+        // Open image in new tab
+        const newTab = window.open();
+        newTab.document.write(`
+          <html>
+          <head><title>Session Evidence</title></head>
+          <body style="margin:0;background:#1a1a1a;display:flex;justify-content:center;align-items:center;min-height:100vh;">
+            <img src="${data.asset.file_data}" style="max-width:100%;max-height:100vh;">
+          </body>
+          </html>
+        `);
+      }
+    }
+  } catch (error) {
+    console.error('Error loading asset:', error);
+  }
+}
+
+function closeSessionModal() {
+  const modal = document.getElementById('session-details-modal');
+  if (modal) modal.style.display = 'none';
+  currentSessionAttendanceId = null;
+}
+
+// Session tab switching
+document.addEventListener('click', (e) => {
+  if (e.target.classList.contains('session-tab-btn')) {
+    const tab = e.target.dataset.tab;
+    
+    // Update active states
+    document.querySelectorAll('.session-tab-btn').forEach(btn => btn.classList.remove('active'));
+    e.target.classList.add('active');
+    
+    // Show/hide panels
+    document.querySelectorAll('.session-tab-panel').forEach(panel => panel.style.display = 'none');
+    
+    if (tab === 'screenshots') {
+      document.getElementById('session-screenshots').style.display = 'block';
+    } else if (tab === 'transcript') {
+      document.getElementById('session-transcript').style.display = 'block';
+    } else if (tab === 'screen-captures') {
+      document.getElementById('session-screen-captures').style.display = 'block';
+    }
+  }
+});
+
+// Export session evidence
+document.addEventListener('click', async (e) => {
+  if (e.target.id === 'export-session-evidence' && currentSessionAttendanceId) {
+    try {
+      const response = await fetch(`/api/attendance/${currentSessionAttendanceId}/export-evidence`, {
+        headers: getAuthHeaders()
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        // Download as JSON
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `session-evidence-${currentSessionAttendanceId}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        toast('Evidence exported successfully', 'success');
+      } else {
+        toast('Failed to export evidence', 'error');
+      }
+    } catch (error) {
+      console.error('Export error:', error);
+      toast('Failed to export evidence', 'error');
+    }
+  }
+});
+
+
+
+// ── Transcript Search Functions ───────────────────────────────────────────────────
+let transcriptSearchData = { recordings: 0, transcripts: 0, sessions: 0 };
+
+async function loadTranscriptSearch() {
+  try {
+    const response = await fetch('/api/transcripts/stats', { headers: getAuthHeaders() });
+    if (response.ok) {
+      const data = await response.json();
+      transcriptSearchData = data;
+      document.getElementById('recordings-count').textContent = data.recordingsWithTranscripts || 0;
+      document.getElementById('transcripts-count').textContent = data.standaloneTranscripts || 0;
+      document.getElementById('sessions-count').textContent = data.sessionsWithTranscripts || 0;
+    }
+  } catch (e) {
+    console.error('Error loading transcript stats:', e);
+  }
+}
+
+async function searchTranscripts(query) {
+  if (!query || query.trim().length < 2) {
+    toast('Please enter at least 2 characters', 'warning');
+    return;
+  }
+  
+  const resultsContainer = document.getElementById('search-results-container');
+  const emptyState = document.getElementById('empty-search-state');
+  const loadingState = document.getElementById('search-loading');
+  const resultsDiv = document.getElementById('search-results');
+  
+  // Show loading
+  emptyState.style.display = 'none';
+  resultsContainer.style.display = 'none';
+  loadingState.style.display = 'block';
+  
+  try {
+    const response = await fetch(`/api/transcripts/search?q=${encodeURIComponent(query)}`, {
+      headers: getAuthHeaders()
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      
+      // Hide loading
+      loadingState.style.display = 'none';
+      resultsContainer.style.display = 'block';
+      
+      // Update results count
+      document.getElementById('results-title').textContent = `Results for "${query}"`;
+      document.getElementById('results-count').textContent = `${data.totalResults} matches found`;
+      
+      if (data.results.length === 0) {
+        resultsDiv.innerHTML = `
+          <div class="empty-search-state">
+            <div class="empty-icon">🔍</div>
+            <h3>No results found</h3>
+            <p>Try different keywords or check your spelling</p>
+          </div>
+        `;
+        return;
+      }
+      
+      // Render results
+      resultsDiv.innerHTML = data.results.map(result => renderSearchResult(result)).join('');
+    } else {
+      loadingState.style.display = 'none';
+      toast('Search failed', 'error');
+    }
+  } catch (e) {
+    console.error('Search error:', e);
+    loadingState.style.display = 'none';
+    toast('Search failed', 'error');
+  }
+}
+
+function renderSearchResult(result) {
+  const typeIcon = result.type === 'recording' ? '🎬' : result.type === 'session' ? '👤' : '📝';
+  const typeLabel = result.type === 'recording' ? 'Recording' : result.type === 'session' ? 'Session' : 'Transcript';
+  
+  const title = result.type === 'recording' 
+    ? result.roomName 
+    : result.type === 'session' 
+      ? `${result.studentName} - ${result.roomName}`
+      : result.roomName;
+  
+  const meta = result.type === 'recording'
+    ? `Recorded by ${result.recordedBy} • ${formatDuration(result.duration)}`
+    : result.type === 'session'
+      ? `${result.sessionDate} • ${result.matchCount} matches`
+      : `${new Date(result.createdAt).toLocaleDateString()} • ${result.matchCount} matches`;
+  
+  return `
+    <div class="result-card" onclick="viewTranscriptResult('${result.id}', '${result.type}')">
+      <div class="result-header">
+        <div class="result-type-icon ${result.type}">${typeIcon}</div>
+        <div class="result-info">
+          <div class="result-title">${escapeHtml(title)}</div>
+          <div class="result-meta">${meta}</div>
+        </div>
+        <span class="result-badge">${result.matchCount} matches</span>
+      </div>
+      <div class="result-matches">
+        ${result.matches.slice(0, 3).map(m => `
+          <div class="match-item">${m.highlighted || escapeHtml(m.text)}</div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function viewTranscriptResult(id, type) {
+  if (type === 'recording') {
+    // Navigate to recordings page and show the recording
+    window.location.hash = 'recordings';
+    loadDashboard();
+  } else if (type === 'session') {
+    // Show session details modal
+    viewSessionDetails(id);
+  } else {
+    // Show transcript
+    toast('Opening transcript...', 'info');
+  }
+}
+
+function quickSearch(term) {
+  document.getElementById('transcript-search-input').value = term;
+  searchTranscripts(term);
+}
+
+// Transcript search event listeners
+document.addEventListener('DOMContentLoaded', () => {
+  const searchInput = document.getElementById('transcript-search-input');
+  const searchBtn = document.getElementById('transcript-search-btn');
+  
+  if (searchInput && searchBtn) {
+    searchBtn.addEventListener('click', () => {
+      searchTranscripts(searchInput.value);
+    });
+    
+    searchInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        searchTranscripts(searchInput.value);
+      }
+    });
+  }
+});
+
 //  STARTUP — Check auth then init
 // ────────────────────────────────────────────────────────────────────────────────
 (async function startup() {

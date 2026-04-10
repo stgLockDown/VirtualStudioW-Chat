@@ -137,6 +137,421 @@ const upload = multer({
 // ─── In-Memory Live State ───────────────────────────────────────────
 const liveRooms = new Map();
 const socketToUser = new Map();
+
+// ───────────────────────────────────────────────────────────── Student Attendance Tracking (Medicaid Compliance) ─────────────────────────────────────────────────────────────
+const activeAttendance = new Map(); // Track active attendance sessions: socketId -> attendance record
+const sessionScreenshotTimers = new Map(); // Track screenshot timers for each session
+const sessionScreenShareDurations = new Map(); // Track screen share duration for each session
+
+// Generate unique session ID
+function generateSessionId(roomId, userId) {
+  return `${roomId}-${userId}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
+// Generate unique asset ID
+function generateAssetId() {
+  return `asset-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
+/**
+ * Capture screenshot data from room (sent by client)
+ */
+async function captureSessionScreenshot(attendanceId, roomId, studentId, socketId) {
+  try {
+    const room = liveRooms.get(roomId);
+    if (!room) return null;
+    
+    const attendanceRecord = activeAttendance.get(socketId);
+    if (!attendanceRecord) return null;
+    
+    // Request screenshot from the student's client
+    // The client will respond with a screenshot data URL
+    const screenshotData = await new Promise((resolve) => {
+      const timeout = setTimeout(() => resolve(null), 5000);
+      
+      // Find student's socket and request screenshot
+      const studentSocket = Array.from(io.sockets.sockets.values())
+        .find(s => s.id === socketId);
+      
+      if (studentSocket) {
+        studentSocket.emit('request-screenshot', { attendanceId });
+        
+        // Listen for response once
+        studentSocket.once('screenshot-captured', (data) => {
+          clearTimeout(timeout);
+          resolve(data);
+        });
+      } else {
+        clearTimeout(timeout);
+        resolve(null);
+      }
+    });
+    
+    if (screenshotData && screenshotData.imageData) {
+      const assetId = generateAssetId();
+      const now = Date.now();
+      
+      // Store in database
+      await db.run(
+        `INSERT INTO session_assets (id, session_id, attendance_id, room_id, student_id, asset_type, thumbnail_data, captured_at, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [assetId, attendanceRecord.session_id, attendanceId, roomId, studentId, 'screenshot', screenshotData.thumbnail || screenshotData.imageData.substring(0, 50000), now, JSON.stringify({ 
+          participantCount: room.participants.size,
+          roomName: room.name 
+        })]
+      );
+      
+      // Update screenshot count
+      await db.run(
+        `UPDATE student_attendance SET screenshots_count = screenshots_count + 1 WHERE id = $1`,
+        [attendanceId]
+      );
+      
+      console.log(`[Attendance] Screenshot captured for student ${studentId} in room ${roomId}`);
+      return assetId;
+    }
+    return null;
+  } catch (error) {
+    console.error('[Attendance] Error capturing screenshot:', error);
+    return null;
+  }
+}
+
+/**
+ * Capture screen share frame
+ */
+async function captureScreenShareFrame(attendanceId, roomId, studentId, socketId) {
+  try {
+    const room = liveRooms.get(roomId);
+    if (!room || !room.screenSharer) return null;
+    
+    const attendanceRecord = activeAttendance.get(socketId);
+    if (!attendanceRecord) return null;
+    
+    // Request screen capture from the screen sharer
+    const screenSharerSocket = Array.from(io.sockets.sockets.values())
+      .find(s => s.id === room.screenSharer);
+    
+    if (!screenSharerSocket) return null;
+    
+    const screenData = await new Promise((resolve) => {
+      const timeout = setTimeout(() => resolve(null), 5000);
+      
+      screenSharerSocket.emit('request-screen-capture', { attendanceId });
+      screenSharerSocket.once('screen-capture-captured', (data) => {
+        clearTimeout(timeout);
+        resolve(data);
+      });
+    });
+    
+    if (screenData && screenData.imageData) {
+      const assetId = generateAssetId();
+      const now = Date.now();
+      
+      // Store in database
+      await db.run(
+        `INSERT INTO session_assets (id, session_id, attendance_id, room_id, student_id, asset_type, file_data, thumbnail_data, captured_at, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [assetId, attendanceRecord.session_id, attendanceId, roomId, studentId, 'screen_capture', screenData.imageData.substring(0, 100000), screenData.thumbnail || screenData.imageData.substring(0, 50000), now, JSON.stringify({
+          screenSharerId: room.screenSharer,
+          participantCount: room.participants.size
+        })]
+      );
+      
+      console.log(`[Attendance] Screen share frame captured for session ${attendanceRecord.session_id}`);
+      return assetId;
+    }
+    return null;
+  } catch (error) {
+    console.error('[Attendance] Error capturing screen share:', error);
+    return null;
+  }
+}
+
+/**
+ * Start periodic screenshot capture for a session
+ */
+function startScreenshotCapture(socketId, attendanceId, roomId, studentId) {
+  // Capture every 5 minutes (300000ms) for Medicaid documentation
+  const INTERVAL = 5 * 60 * 1000;
+  
+  const timer = setInterval(async () => {
+    const attendanceRecord = activeAttendance.get(socketId);
+    if (!attendanceRecord) {
+      // Student left, stop capturing
+      stopScreenshotCapture(socketId);
+      return;
+    }
+    
+    await captureSessionScreenshot(attendanceId, roomId, studentId, socketId);
+    
+    // Also capture screen share if active
+    const room = liveRooms.get(roomId);
+    if (room && room.screenSharer) {
+      await captureScreenShareFrame(attendanceId, roomId, studentId, socketId);
+    }
+  }, INTERVAL);
+  
+  sessionScreenshotTimers.set(socketId, timer);
+  
+  // Also capture initial screenshot after 10 seconds
+  setTimeout(async () => {
+    const attendanceRecord = activeAttendance.get(socketId);
+    if (attendanceRecord) {
+      await captureSessionScreenshot(attendanceId, roomId, studentId, socketId);
+    }
+  }, 10000);
+  
+  console.log(`[Attendance] Started screenshot capture for session ${attendanceId}`);
+}
+
+/**
+ * Stop screenshot capture for a session
+ */
+function stopScreenshotCapture(socketId) {
+  const timer = sessionScreenshotTimers.get(socketId);
+  if (timer) {
+    clearInterval(timer);
+    sessionScreenshotTimers.delete(socketId);
+  }
+}
+
+/**
+ * Track screen share start for a student's session
+ */
+function trackScreenShareStart(socketId) {
+  const attendanceRecord = activeAttendance.get(socketId);
+  if (attendanceRecord) {
+    sessionScreenShareDurations.set(socketId, {
+      startTime: Date.now(),
+      totalDuration: sessionScreenShareDurations.get(socketId)?.totalDuration || 0
+    });
+  }
+}
+
+/**
+ * Track screen share stop for a student's session
+ */
+function trackScreenShareStop(socketId) {
+  const tracking = sessionScreenShareDurations.get(socketId);
+  if (tracking) {
+    const duration = Math.floor((Date.now() - tracking.startTime) / 1000);
+    tracking.totalDuration += duration;
+    sessionScreenShareDurations.set(socketId, tracking);
+  }
+}
+
+/**
+ * Record when a student joins a room
+ */
+async function recordStudentJoin(socketId, { userId, userName, roomId, roomName, roomType, instructorId, instructorName }) {
+  try {
+    const attendanceId = `${roomId}-${userId}-${Date.now()}`;
+    const sessionId = generateSessionId(roomId, userId);
+    const now = Date.now();
+    const sessionDate = new Date(now).toISOString().split('T')[0]; // YYYY-MM-DD format
+    
+    const attendanceRecord = {
+      id: attendanceId,
+      session_id: sessionId,
+      student_id: userId,
+      student_name: userName,
+      room_id: roomId,
+      room_name: roomName,
+      room_type: roomType || 'classroom',
+      instructor_id: instructorId,
+      instructor_name: instructorName,
+      joined_at: now,
+      left_at: null,
+      duration_seconds: 0,
+      session_date: sessionDate,
+      transcript_snapshot: null,
+      screenshots_count: 0,
+      screen_share_duration: 0
+    };
+    
+    // Store in memory for quick access when they leave
+    activeAttendance.set(socketId, attendanceRecord);
+    
+    // Insert into database with enhanced fields
+    await db.run(
+      `INSERT INTO student_attendance (id, session_id, student_id, student_name, room_id, room_name, room_type, instructor_id, instructor_name, joined_at, session_date, transcript_snapshot, screenshots_count, screen_share_duration) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+      [attendanceId, sessionId, userId, userName, roomId, roomName, roomType || 'classroom', instructorId, instructorName, now, sessionDate, null, 0, 0]
+    );
+    
+    // Start periodic screenshot capture
+    startScreenshotCapture(socketId, attendanceId, roomId, userId);
+    
+    console.log(`[Attendance] Student ${userName} (${userId}) joined room ${roomId} at ${new Date(now).toISOString()}, session: ${sessionId}`);
+    return attendanceRecord;
+  } catch (error) {
+    console.error('[Attendance] Error recording student join:', error);
+    return null;
+  }
+}
+
+/**
+ * Record when a student leaves a room
+ */
+async function recordStudentLeave(socketId) {
+  try {
+    const attendanceRecord = activeAttendance.get(socketId);
+    if (!attendanceRecord) {
+      return null; // Not a student or already recorded
+    }
+    
+    const now = Date.now();
+    const durationSeconds = Math.floor((now - attendanceRecord.joined_at) / 1000);
+    
+    // Stop screenshot capture
+    stopScreenshotCapture(socketId);
+    
+    // Get final screen share duration
+    const screenShareTracking = sessionScreenShareDurations.get(socketId);
+    let screenShareDuration = screenShareTracking?.totalDuration || 0;
+    sessionScreenShareDurations.delete(socketId);
+    
+    // Get transcript snapshot from the room
+    const room = liveRooms.get(attendanceRecord.room_id);
+    let transcriptSnapshot = null;
+    if (room && room.activeTranscript && room.activeTranscript.length > 0) {
+      // Filter transcript to only include segments from this session's time window
+      const sessionTranscript = room.activeTranscript.filter(seg => 
+        seg.timestamp >= attendanceRecord.joined_at && seg.timestamp <= now
+      );
+      if (sessionTranscript.length > 0) {
+        transcriptSnapshot = JSON.stringify(sessionTranscript);
+      }
+    }
+    
+    // Update in database with enhanced fields
+    await db.run(
+      `UPDATE student_attendance SET left_at = $1, duration_seconds = $2, transcript_snapshot = $3, screen_share_duration = $4 WHERE id = $5`,
+      [now, durationSeconds, transcriptSnapshot, screenShareDuration, attendanceRecord.id]
+    );
+    
+    // Remove from active tracking
+    activeAttendance.delete(socketId);
+    
+    console.log(`[Attendance] Student ${attendanceRecord.student_name} left room ${attendanceRecord.room_id} after ${durationSeconds} seconds, screenshots: ${attendanceRecord.screenshots_count}, screen share: ${screenShareDuration}s`);
+    return { ...attendanceRecord, left_at: now, duration_seconds: durationSeconds, transcript_snapshot: transcriptSnapshot, screen_share_duration: screenShareDuration };
+  } catch (error) {
+    console.error('[Attendance] Error recording student leave:', error);
+    return null;
+  }
+}
+
+/**
+ * Get attendance records for a specific room
+ */
+async function getRoomAttendance(roomId) {
+  try {
+    const records = await db.getAll(
+      `SELECT * FROM student_attendance WHERE room_id = $1 ORDER BY joined_at DESC`,
+      [roomId]
+    );
+    return records;
+  } catch (error) {
+    console.error('[Attendance] Error getting room attendance:', error);
+    return [];
+  }
+}
+
+/**
+ * Get attendance records for a specific student
+ */
+async function getStudentAttendance(studentId, startDate = null, endDate = null) {
+  try {
+    let query = `SELECT * FROM student_attendance WHERE student_id = $1`;
+    const params = [studentId];
+    
+    if (startDate) {
+      query += ` AND session_date >= $${params.length + 1}`;
+      params.push(startDate);
+    }
+    if (endDate) {
+      query += ` AND session_date <= $${params.length + 1}`;
+      params.push(endDate);
+    }
+    
+    query += ` ORDER BY joined_at DESC`;
+    
+    const records = await db.getAll(query, params);
+    return records;
+  } catch (error) {
+    console.error('[Attendance] Error getting student attendance:', error);
+    return [];
+  }
+}
+
+/**
+ * Get all attendance records for a date range (admin view)
+ */
+async function getAllAttendance(startDate = null, endDate = null, roomId = null, instructorId = null) {
+  try {
+    let query = `SELECT * FROM student_attendance WHERE 1=1`;
+    const params = [];
+    
+    if (startDate) {
+      params.push(startDate);
+      query += ` AND session_date >= $${params.length}`;
+    }
+    if (endDate) {
+      params.push(endDate);
+      query += ` AND session_date <= $${params.length}`;
+    }
+    if (roomId) {
+      params.push(roomId);
+      query += ` AND room_id = $${params.length}`;
+    }
+    if (instructorId) {
+      params.push(instructorId);
+      query += ` AND instructor_id = $${params.length}`;
+    }
+    
+    query += ` ORDER BY joined_at DESC LIMIT 1000`;
+    
+    const records = await db.getAll(query, params);
+    return records;
+  } catch (error) {
+    console.error('[Attendance] Error getting all attendance:', error);
+    return [];
+  }
+}
+
+/**
+ * Get session assets for an attendance record
+ */
+async function getSessionAssets(attendanceId) {
+  try {
+    const assets = await db.getAll(
+      `SELECT id, session_id, asset_type, thumbnail_data, captured_at, metadata FROM session_assets WHERE attendance_id = $1 ORDER BY captured_at ASC`,
+      [attendanceId]
+    );
+    return assets;
+  } catch (error) {
+    console.error('[Attendance] Error getting session assets:', error);
+    return [];
+  }
+}
+
+/**
+ * Get full asset data (including file_data)
+ */
+async function getAssetData(assetId) {
+  try {
+    const asset = await db.getOne(
+      `SELECT * FROM session_assets WHERE id = $1`,
+      [assetId]
+    );
+    return asset;
+  } catch (error) {
+    console.error('[Attendance] Error getting asset data:', error);
+    return null;
+  }
+}
+
 const waitingArea = new Map();
 
 async function getRoomTheme(id, type) {
@@ -634,6 +1049,231 @@ app.post('/api/transcripts', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+
+// ── Transcript Search API (ChatGPT-like) ──
+app.get('/api/transcripts/search', authMiddleware, async (req, res) => {
+  try {
+    const { q, roomId, startDate, endDate, limit = 50 } = req.query;
+    
+    if (!q || q.trim().length < 2) {
+      return res.status(400).json({ error: 'Search query must be at least 2 characters' });
+    }
+    
+    const searchQuery = q.toLowerCase().trim();
+    const results = [];
+    
+    // Search in recordings transcripts
+    const recordings = await db.getAll(
+      `SELECT r.id, r.room_id, r.room_name, r.recorded_by_name, r.duration, r.created_at, r.transcript, r.room_type
+       FROM recordings r 
+       WHERE r.transcript IS NOT NULL AND r.transcript != ''
+       ORDER BY r.created_at DESC LIMIT 100`
+    );
+    
+    for (const rec of recordings) {
+      if (rec.transcript && rec.transcript.toLowerCase().includes(searchQuery)) {
+        // Find matching segments
+        const transcriptLines = rec.transcript.split('\n');
+        const matches = [];
+        
+        for (const line of transcriptLines) {
+          if (line.toLowerCase().includes(searchQuery)) {
+            matches.push({
+              text: line,
+              highlighted: line.replace(new RegExp(`(${escapeRegex(q)})`, 'gi'), '<mark>$1</mark>')
+            });
+          }
+        }
+        
+        if (matches.length > 0) {
+          results.push({
+            type: 'recording',
+            id: rec.id,
+            roomId: rec.room_id,
+            roomName: rec.room_name,
+            recordedBy: rec.recorded_by_name,
+            duration: rec.duration,
+            createdAt: rec.created_at,
+            matches: matches.slice(0, 10),
+            matchCount: matches.length,
+            snippet: matches[0]?.text?.substring(0, 200) || ''
+          });
+        }
+      }
+    }
+    
+    // Search in transcripts table
+    const transcripts = await db.getAll(
+      `SELECT t.id, t.room_id, t.content, t.created_at, r.name as room_name
+       FROM transcripts t
+       LEFT JOIN (SELECT id, name FROM classrooms UNION SELECT id, name FROM meeting_rooms) r ON t.room_id = r.id
+       WHERE t.content IS NOT NULL AND t.content != '[]'
+       ORDER BY t.created_at DESC LIMIT 100`
+    );
+    
+    for (const tr of transcripts) {
+      try {
+        const content = JSON.parse(tr.content || '[]');
+        const matches = [];
+        
+        for (const segment of content) {
+          if (segment.text && segment.text.toLowerCase().includes(searchQuery)) {
+            const text = `[${segment.speaker || 'Unknown'}]: ${segment.text}`;
+            matches.push({
+              speaker: segment.speaker,
+              text: segment.text,
+              timestamp: segment.timestamp,
+              highlighted: text.replace(new RegExp(`(${escapeRegex(q)})`, 'gi'), '<mark>$1</mark>')
+            });
+          }
+        }
+        
+        if (matches.length > 0) {
+          results.push({
+            type: 'transcript',
+            id: tr.id,
+            roomId: tr.room_id,
+            roomName: tr.room_name || tr.room_id,
+            createdAt: tr.created_at,
+            matches: matches.slice(0, 10),
+            matchCount: matches.length,
+            snippet: matches[0]?.text?.substring(0, 200) || ''
+          });
+        }
+      } catch (e) {
+        // Skip malformed JSON
+      }
+    }
+    
+    // Search in student attendance transcripts (session snapshots)
+    const attendanceTranscripts = await db.getAll(
+      `SELECT a.id, a.session_id, a.student_name, a.room_name, a.session_date, a.transcript_snapshot, a.joined_at
+       FROM student_attendance a
+       WHERE a.transcript_snapshot IS NOT NULL AND a.transcript_snapshot != '' AND a.transcript_snapshot != '[]'
+       ORDER BY a.joined_at DESC LIMIT 100`
+    );
+    
+    for (const at of attendanceTranscripts) {
+      try {
+        const content = JSON.parse(at.transcript_snapshot || '[]');
+        const matches = [];
+        
+        for (const segment of content) {
+          if (segment.text && segment.text.toLowerCase().includes(searchQuery)) {
+            const text = `[${segment.speaker || 'Unknown'}]: ${segment.text}`;
+            matches.push({
+              speaker: segment.speaker,
+              text: segment.text,
+              timestamp: segment.timestamp,
+              highlighted: text.replace(new RegExp(`(${escapeRegex(q)})`, 'gi'), '<mark>$1</mark>')
+            });
+          }
+        }
+        
+        if (matches.length > 0) {
+          results.push({
+            type: 'session',
+            id: at.id,
+            sessionId: at.session_id,
+            studentName: at.student_name,
+            roomName: at.room_name,
+            sessionDate: at.session_date,
+            joinedAt: at.joined_at,
+            matches: matches.slice(0, 10),
+            matchCount: matches.length,
+            snippet: matches[0]?.text?.substring(0, 200) || ''
+          });
+        }
+      } catch (e) {
+        // Skip malformed JSON
+      }
+    }
+    
+    // Sort results by relevance (match count) and date
+    results.sort((a, b) => b.matchCount - a.matchCount || (b.createdAt || 0) - (a.createdAt || 0));
+    
+    res.json({
+      query: q,
+      totalResults: results.length,
+      results: results.slice(0, parseInt(limit))
+    });
+  } catch (e) {
+    console.error('Transcript search error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get all transcripts for a room
+app.get('/api/transcripts/room/:roomId', authMiddleware, async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    const transcripts = [];
+    
+    // From recordings
+    const recordings = await db.getAll(
+      'SELECT id, room_id, room_name, recorded_by_name, duration, created_at, transcript FROM recordings WHERE room_id = $1 ORDER BY created_at DESC',
+      [roomId]
+    );
+    
+    for (const rec of recordings) {
+      if (rec.transcript) {
+        transcripts.push({
+          type: 'recording',
+          id: rec.id,
+          roomName: rec.room_name,
+          recordedBy: rec.recorded_by_name,
+          duration: rec.duration,
+          createdAt: rec.created_at,
+          content: rec.transcript
+        });
+      }
+    }
+    
+    // From transcripts table
+    const trs = await db.getAll(
+      'SELECT id, room_id, content, created_at FROM transcripts WHERE room_id = $1 ORDER BY created_at DESC',
+      [roomId]
+    );
+    
+    for (const tr of trs) {
+      transcripts.push({
+        type: 'transcript',
+        id: tr.id,
+        createdAt: tr.created_at,
+        content: tr.content
+      });
+    }
+    
+    res.json({ roomId, transcripts });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get transcript statistics
+app.get('/api/transcripts/stats', authMiddleware, async (req, res) => {
+  try {
+    const recordingCount = await db.getOne('SELECT COUNT(*) as count FROM recordings WHERE transcript IS NOT NULL AND transcript != ""');
+    const transcriptCount = await db.getOne('SELECT COUNT(*) as count FROM transcripts WHERE content IS NOT NULL AND content != "[]"');
+    const sessionCount = await db.getOne('SELECT COUNT(*) as count FROM student_attendance WHERE transcript_snapshot IS NOT NULL AND transcript_snapshot != "[]"');
+    
+    const recentSearches = []; // Could be stored in a separate table if needed
+    
+    res.json({
+      recordingsWithTranscripts: recordingCount?.count || 0,
+      standaloneTranscripts: transcriptCount?.count || 0,
+      sessionsWithTranscripts: sessionCount?.count || 0,
+      recentSearches
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+function escapeRegex(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 // ── Integrations API ──
 app.get('/api/integrations', async (req, res) => {
   try {
@@ -1102,6 +1742,255 @@ app.get('/api/live-rooms', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STUDENT ATTENDANCE API (Medicaid Compliance)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Get attendance records for a specific room
+app.get('/api/attendance/room/:roomId', authMiddleware, requireRole('admin'), async (req, res) => {
+  try {
+    const records = await getRoomAttendance(req.params.roomId);
+    res.json(records);
+  } catch (e) {
+    console.error('Error getting room attendance:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get attendance records for a specific student
+app.get('/api/attendance/student/:studentId', authMiddleware, async (req, res) => {
+  try {
+    // Users can view their own attendance, admins can view anyone's
+    const isOwn = req.user.id === req.params.studentId;
+    const isAdmin = ['admin', 'owner', 'developer'].includes(req.user.role);
+    
+    if (!isOwn && !isAdmin) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    
+    const { startDate, endDate } = req.query;
+    const records = await getStudentAttendance(req.params.studentId, startDate, endDate);
+    res.json(records);
+  } catch (e) {
+    console.error('Error getting student attendance:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get all attendance records (admin only) with filtering
+app.get('/api/attendance', authMiddleware, requireRole('admin'), async (req, res) => {
+  try {
+    const { startDate, endDate, roomId, instructorId } = req.query;
+    const records = await getAllAttendance(startDate, endDate, roomId, instructorId);
+    res.json(records);
+  } catch (e) {
+    console.error('Error getting all attendance:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get attendance summary statistics
+app.get('/api/attendance/summary', authMiddleware, requireRole('admin'), async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    
+    // Get total sessions
+    const totalQuery = await db.getOne(
+      `SELECT COUNT(DISTINCT room_id) as total_rooms, 
+              COUNT(*) as total_sessions,
+              COUNT(DISTINCT student_id) as unique_students,
+              SUM(duration_seconds) as total_duration
+       FROM student_attendance 
+       WHERE ($1::text IS NULL OR session_date >= $1) 
+         AND ($2::text IS NULL OR session_date <= $2)`,
+      [startDate || null, endDate || null]
+    );
+    
+    // Get daily breakdown
+    const dailyQuery = await db.getAll(
+      `SELECT session_date, 
+              COUNT(*) as sessions,
+              COUNT(DISTINCT student_id) as students,
+              SUM(duration_seconds) as total_duration
+       FROM student_attendance 
+       WHERE ($1::text IS NULL OR session_date >= $1) 
+         AND ($2::text IS NULL OR session_date <= $2)
+       GROUP BY session_date
+       ORDER BY session_date DESC
+       LIMIT 30`,
+      [startDate || null, endDate || null]
+    );
+    
+    res.json({
+      summary: totalQuery || { total_rooms: 0, total_sessions: 0, unique_students: 0, total_duration: 0 },
+      daily: dailyQuery || []
+    });
+  } catch (e) {
+    console.error('Error getting attendance summary:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Export attendance records as CSV (for Medicaid reporting)
+app.get('/api/attendance/export', authMiddleware, requireRole('admin'), async (req, res) => {
+  try {
+    const { startDate, endDate, roomId } = req.query;
+    const records = await getAllAttendance(startDate, endDate, roomId);
+    
+    // Generate CSV
+    const headers = ['Student ID', 'Student Name', 'Room ID', 'Room Name', 'Room Type', 'Instructor Name', 'Joined At', 'Left At', 'Duration (seconds)', 'Session Date'];
+    const csvRows = [headers.join(',')];
+    
+    for (const record of records) {
+      const row = [
+        record.student_id,
+        `"${(record.student_name || '').replace(/"/g, '""')}"`,
+        record.room_id,
+        `"${(record.room_name || '').replace(/"/g, '""')}"`,
+        record.room_type,
+        `"${(record.instructor_name || '').replace(/"/g, '""')}"`,
+        record.joined_at ? new Date(record.joined_at).toISOString() : '',
+        record.left_at ? new Date(record.left_at).toISOString() : '',
+        record.duration_seconds || 0,
+        record.session_date || ''
+      ];
+      csvRows.push(row.join(','));
+    }
+    
+    const csv = csvRows.join('\n');
+    const filename = `attendance_${startDate || 'all'}_${endDate || 'all'}.csv`;
+    
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
+  } catch (e) {
+    console.error('Error exporting attendance:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
+// Session Assets API Endpoints (for Medicaid compliance)
+
+// Get session assets for an attendance record
+app.get('/api/attendance/:attendanceId/assets', authMiddleware, async (req, res) => {
+  try {
+    const { attendanceId } = req.params;
+    const assets = await getSessionAssets(attendanceId);
+    res.json({ assets });
+  } catch (e) {
+    console.error('Error getting session assets:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get full asset data (screenshot or screen capture)
+app.get('/api/assets/:assetId', authMiddleware, async (req, res) => {
+  try {
+    const { assetId } = req.params;
+    const asset = await getAssetData(assetId);
+    if (!asset) {
+      return res.status(404).json({ error: 'Asset not found' });
+    }
+    res.json({ asset });
+  } catch (e) {
+    console.error('Error getting asset:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get session details with assets and transcript
+app.get('/api/attendance/:attendanceId/session-details', authMiddleware, async (req, res) => {
+  try {
+    const { attendanceId } = req.params;
+    const attendance = await db.getOne(
+      'SELECT * FROM student_attendance WHERE id = $1',
+      [attendanceId]
+    );
+    if (!attendance) {
+      return res.status(404).json({ error: 'Attendance record not found' });
+    }
+    
+    const assets = await getSessionAssets(attendanceId);
+    const transcript = attendance.transcript_snapshot ? JSON.parse(attendance.transcript_snapshot) : [];
+    
+    res.json({
+      attendance,
+      assets,
+      transcript,
+      summary: {
+        duration: attendance.duration_seconds,
+        screenshots: attendance.screenshots_count,
+        screenShareDuration: attendance.screen_share_duration,
+        transcriptSegments: transcript.length
+      }
+    });
+  } catch (e) {
+    console.error('Error getting session details:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Export session evidence as PDF-ready data
+app.get('/api/attendance/:attendanceId/export-evidence', authMiddleware, requireRole('admin'), async (req, res) => {
+  try {
+    const { attendanceId } = req.params;
+    const attendance = await db.getOne(
+      'SELECT * FROM student_attendance WHERE id = $1',
+      [attendanceId]
+    );
+    if (!attendance) {
+      return res.status(404).json({ error: 'Attendance record not found' });
+    }
+    
+    const assets = await db.getAll(
+      'SELECT id, asset_type, thumbnail_data, captured_at, metadata FROM session_assets WHERE attendance_id = $1 ORDER BY captured_at ASC',
+      [attendanceId]
+    );
+    
+    const transcript = attendance.transcript_snapshot ? JSON.parse(attendance.transcript_snapshot) : [];
+    
+    // Generate evidence report
+    const evidenceReport = {
+      sessionInfo: {
+        studentName: attendance.student_name,
+        studentId: attendance.student_id,
+        roomName: attendance.room_name,
+        roomId: attendance.room_id,
+        instructorName: attendance.instructor_name,
+        sessionDate: attendance.session_date,
+        joinedAt: new Date(attendance.joined_at).toISOString(),
+        leftAt: attendance.left_at ? new Date(attendance.left_at).toISOString() : 'N/A',
+        durationMinutes: Math.floor(attendance.duration_seconds / 60),
+        durationSeconds: attendance.duration_seconds
+      },
+      evidence: {
+        screenshotCount: attendance.screenshots_count,
+        screenShareDurationSeconds: attendance.screen_share_duration,
+        transcriptSegments: transcript.length
+      },
+      assets: assets.map(a => ({
+        id: a.id,
+        type: a.asset_type,
+        capturedAt: new Date(a.captured_at).toISOString(),
+        metadata: a.metadata ? JSON.parse(a.metadata) : {}
+      })),
+      transcript: transcript.map(t => ({
+        speaker: t.speaker,
+        text: t.text,
+        timestamp: new Date(t.timestamp).toISOString()
+      }))
+    };
+    
+    res.json(evidenceReport);
+  } catch (e) {
+    console.error('Error exporting session evidence:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
 // SPA fallback
 app.get('/{*splat}', (req, res) => { res.sendFile(path.join(__dirname, '..', 'public', 'index.html')); });
 
@@ -1207,6 +2096,21 @@ io.on('connection', (socket) => {
       socket.join(roomId);
       socket.to(roomId).emit('user-joined', { userId: socket.id, userName, userRole: role, audioEnabled: participant.audioEnabled, videoEnabled: participant.videoEnabled });
       io.to(roomId).emit('participants-update', { participants: getParticipantList(room) });
+      
+      // Track student attendance for Medicaid compliance
+      if (role === 'student') {
+        const hostInfo = room.participants.get(room.hostId);
+        await recordStudentJoin(socket.id, {
+          userId: existJoin?.id || socket.id,
+          userName: userName,
+          roomId: roomId,
+          roomName: room.name,
+          roomType: room.type,
+          instructorId: room.hostId ? (hostInfo?.id || room.hostId) : null,
+          instructorName: hostInfo?.name || room.hostName
+        });
+      }
+      
       await updateLiveRoomInDB(room);
       callback({ success: true, waiting: false, roomId, meetingName: room.name, participants: getParticipantList(room), settings: room.settings, chatHistory: room.chatMessages.slice(-200), isRecording: room.isRecording, muteOnEntry: room.settings.muteOnEntry, transcript: room.activeTranscript.slice(-100), theme: room.theme });
     } catch(e) { console.error('join-room error:', e.message); callback({ success: false, error: e.message }); }
@@ -1241,6 +2145,22 @@ io.on('connection', (socket) => {
     socket.to(user.roomId).emit('user-joined', { userId: participantId, userName: waiting.name, userRole: waiting.role, audioEnabled: participant.audioEnabled, videoEnabled: participant.videoEnabled });
     io.to(user.roomId).emit('participants-update', { participants: getParticipantList(room) });
     emitWaitingRoomUpdate(room, user.roomId);
+    
+    // Track student attendance for Medicaid compliance
+    if (waiting.role === 'student') {
+      const hostInfo = room.participants.get(room.hostId);
+      const waitingUser = socketToUser.get(participantId);
+      recordStudentJoin(participantId, {
+        userId: waitingUser?.id || participantId,
+        userName: waiting.name,
+        roomId: user.roomId,
+        roomName: room.name,
+        roomType: room.type,
+        instructorId: room.hostId ? (hostInfo?.id || room.hostId) : null,
+        instructorName: hostInfo?.name || room.hostName
+      });
+    }
+    
     updateLiveRoomInDB(room);
     console.log('[Admit] Participant admitted successfully');
   });
@@ -1533,6 +2453,12 @@ async function handleLeave(socket) {
   room.waitingList.delete(socket.id);
   const participant = room.participants.get(socket.id);
   if (participant) {
+    // Record student leave time for Medicaid compliance
+    const attendanceRecord = await recordStudentLeave(socket.id);
+    if (attendanceRecord) {
+      console.log(`[Attendance] Recorded leave for ${attendanceRecord.student_name}`);
+    }
+    
     room.participants.delete(socket.id);
     socket.to(user.roomId).emit('user-left', { userId: socket.id, userName: user.name });
     io.to(user.roomId).emit('participants-update', { participants: getParticipantList(room) });
